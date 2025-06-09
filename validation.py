@@ -1,5 +1,6 @@
 import json
 import openai
+from openai_config import load_api_key
 
 
 class ValidationError(Exception):
@@ -95,6 +96,7 @@ def validate_epp(path: str) -> dict:
     JSON.
     """
 
+    load_api_key()
     with open(path, "r", encoding="cp1250") as f:
         epp_content = f.read()
 

@@ -5,6 +5,8 @@ import subprocess
 import json
 from datetime import datetime
 
+from openai_config import load_api_key
+
 from json_to_epp import agent2_json_to_epp
 from validation import validate_epp, ValidationError
 
@@ -113,4 +115,5 @@ def watch_loop():
 
 
 if __name__ == '__main__':
+    load_api_key()
     watch_loop()
