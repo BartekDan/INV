@@ -16,13 +16,15 @@ inside that script for Google Drive and local batch modes respectively.
 
 ### OCR Helper
 
-`ocr_to_json.py` converts a folder of invoice images into JSON files using an
-OpenAI vision model. JSON files are written to a `json/` subfolder beside the
-images by default.
+`ocr_to_json.py` converts invoice scans into JSON files using an OpenAI vision
+model. By default it reads images from the `invoices/` folder and writes the
+results to `invoices_json/`.
 
 ```bash
-python ocr_to_json.py scans_folder
+python ocr_to_json.py
 ```
+
+Use `--source-dir` and `--output-dir` to override these locations.
 
 Set the `OPENAI_API_KEY` environment variable before running.
 
@@ -39,3 +41,4 @@ python agent.py
 ```
 
 Place JSON invoice files in `invoices_json/` and monitor the logs in `logs/agent.log`.
+Place invoice scans in `invoices/` and run `ocr_to_json.py` to generate those JSON files.
