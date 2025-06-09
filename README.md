@@ -14,6 +14,18 @@ convert a folder of JSON invoice files into `.epp` files.  See the
 `gdrive_batch_convert_json_to_epp` and `batch_convert_json_to_epp` functions
 inside that script for Google Drive and local batch modes respectively.
 
+### OCR Helper
+
+`ocr_to_json.py` converts a folder of invoice images into JSON files using an
+OpenAI vision model. JSON files are written to a `json/` subfolder beside the
+images by default.
+
+```bash
+python ocr_to_json.py scans_folder
+```
+
+Set the `OPENAI_API_KEY` environment variable before running.
+
 ## Installation
 
 ```bash
