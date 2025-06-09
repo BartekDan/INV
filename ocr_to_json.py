@@ -4,6 +4,10 @@ from pathlib import Path
 from tqdm import tqdm
 import openai
 
+# Default directories used by the CLI
+DEFAULT_SOURCE_DIR = "invoices"
+DEFAULT_OUTPUT_DIR = "invoices_json"
+
 # Fields to extract from the invoice OCR
 FIELDS_TO_EXTRACT = [
     "invoice_number",
@@ -113,7 +117,7 @@ def batch_ocr_images(source_dir: str, output_dir: str | None = None) -> None:
     """Run OCR for every invoice image in *source_dir*."""
     src = Path(source_dir)
     if output_dir is None:
-        out = src / "json"
+        out = Path(DEFAULT_OUTPUT_DIR)
     else:
         out = Path(output_dir)
     out.mkdir(exist_ok=True)
@@ -135,9 +139,15 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="OCR invoice images to JSON")
-    parser.add_argument("source_dir", help="Folder containing invoice scans")
     parser.add_argument(
-        "--output-dir", default=None, help="Where to place JSON files (default: <source_dir>/json)"
+        "--source-dir",
+        default=DEFAULT_SOURCE_DIR,
+        help=f"Folder containing invoice scans (default: {DEFAULT_SOURCE_DIR})",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=DEFAULT_OUTPUT_DIR,
+        help=f"Where to place JSON files (default: {DEFAULT_OUTPUT_DIR})",
     )
 
     args = parser.parse_args()
