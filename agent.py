@@ -7,7 +7,8 @@ from datetime import datetime
 
 from openai_config import load_api_key
 
-from json_to_epp import agent2_json_to_epp
+import importlib
+import json_to_epp
 from validation import validate_epp, ValidationError
 
 WATCH_DIR = 'invoices_json'
@@ -77,7 +78,7 @@ def apply_patch(diff_text):
 def process_file(json_file):
     base = os.path.splitext(os.path.basename(json_file))[0]
     tmp_epp = os.path.join(OUTPUT_DIR, base + '.epp')
-    agent2_json_to_epp(json_file, tmp_epp)
+    json_to_epp.agent2_json_to_epp(json_file, tmp_epp)
     iter_no = 0
     while iter_no < MAX_ITER:
         try:
@@ -95,7 +96,8 @@ def process_file(json_file):
             log(f"AI diff:\n{diff}")
             save_script_version(iter_no)
             apply_patch(diff)
-            agent2_json_to_epp(json_file, tmp_epp)
+            importlib.reload(json_to_epp)
+            json_to_epp.agent2_json_to_epp(json_file, tmp_epp)
             iter_no += 1
     shutil.move(tmp_epp, os.path.join(ARCHIVE_DIR, base + '_failed.epp'))
     log(f"Failed to convert {json_file} after {MAX_ITER} attempts")
