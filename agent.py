@@ -47,12 +47,15 @@ def call_ai(epp_content, errors, script_content):
         "\nCurrent conversion script:\n" + script_content +
         "\nProvide a unified diff to fix the script."
     )
-    response = openai.ChatCompletion.create(
-        model='gpt-4',
-        messages=[{"role": "system", "content": "You are an AI assistant."}, {"role": "user", "content": prompt}],
-        temperature=0
+    response = openai.chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "You are an AI assistant."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0,
     )
-    return response['choices'][0]['message']['content']
+    return response.choices[0].message.content
 
 
 def apply_patch(diff_text):
