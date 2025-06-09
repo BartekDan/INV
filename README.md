@@ -4,6 +4,16 @@ This repository contains a simple Python agent that watches the `invoices_json/`
 for JSON invoice files. When a file appears it is converted into the EDI++ 1.11 `.epp`
 format using `json_to_epp.py`.
 
+## Quick Start
+
+```bash
+pip install -r requirements.txt
+echo OPENAI_API_KEY=sk-... > .env  # or edit .env in your editor
+python agent.py
+```
+
+Drop JSON files into `invoices_json/` and they will be converted to `.epp`.
+
 The agent validates the output and, if validation fails, asks an OpenAI model for a patch
 to fix the converter. Patched versions of the converter are stored in `script_versions/`.
 
@@ -26,7 +36,14 @@ python ocr_to_json.py
 
 Use `--source-dir` and `--output-dir` to override these locations.
 
-Set the `OPENAI_API_KEY` environment variable before running.
+Create a `.env` file in this folder with your OpenAI key:
+
+```
+OPENAI_API_KEY=sk-...
+```
+
+The scripts automatically load this file so you don't have to set any
+environment variables.
 
 ## Installation
 

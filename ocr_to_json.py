@@ -3,6 +3,7 @@ import base64
 from pathlib import Path
 from tqdm import tqdm
 import openai
+from openai_config import load_api_key
 
 # Default directories used by the CLI
 DEFAULT_SOURCE_DIR = "invoices"
@@ -136,6 +137,7 @@ def batch_ocr_images(source_dir: str, output_dir: str | None = None) -> None:
 
 
 if __name__ == "__main__":
+    load_api_key()
     import argparse
 
     parser = argparse.ArgumentParser(description="OCR invoice images to JSON")
