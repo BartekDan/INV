@@ -1,5 +1,6 @@
-openai==1.10.0
-httpx==0.27.0
+# `reasoning_effort` requires a recent OpenAI client
+openai>=1.85.0
+httpx>=0.27.0
 watchdog
 unidiff
 tqdm

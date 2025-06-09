@@ -8,6 +8,7 @@ format using `json_to_epp.py`.
 
 ```bash
 pip install -r requirements.txt
+# `ocr_to_json.py` relies on OpenAI client >=1.85 for the `reasoning_effort` option
 echo OPENAI_API_KEY=sk-... > .env  # or edit .env in your editor
 python agent.py
 ```
