@@ -22,7 +22,7 @@ MAX_ITER = 5
 
 def log(msg):
     os.makedirs(LOG_DIR, exist_ok=True)
-    with open(os.path.join(LOG_DIR, 'agent.log'), 'a') as f:
+    with open(os.path.join(LOG_DIR, 'agent.log'), 'a', encoding='utf-8') as f:
         f.write(f"{datetime.now().isoformat()} {msg}\n")
     print(msg)
 
