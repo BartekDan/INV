@@ -121,6 +121,7 @@ def validate_epp(path: str) -> dict:
 
     summary = report.get("summary") or {}
     if not summary.get("valid"):
-        raise ValidationError(json.dumps(summary))
+        # include the full validation report for better debugging
+        raise ValidationError(json.dumps(report))
 
     return report

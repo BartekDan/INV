@@ -87,10 +87,17 @@ def process_file(json_file):
             log(f"{json_file} converted successfully")
             return
         except ValidationError as e:
-            log(f"Validation failed: {e}")
+            # e contains the full JSON report from the validator
+            try:
+                report = json.loads(str(e))
+                log(f"Validation failed: {report.get('summary')}")
+            except json.JSONDecodeError:
+                # fall back to raw message
+                log(f"Validation failed: {e}")
             with open(tmp_epp, 'r', encoding='cp1250') as f:
                 epp_content = f.read()
             script_content = load_script()
+            # pass the raw JSON report to the AI for context
             diff = call_ai(epp_content, str(e), script_content)
             log(f"AI diff:\n{diff}")
             save_script_version(iter_no)
