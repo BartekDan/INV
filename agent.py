@@ -8,7 +8,7 @@ from datetime import datetime
 from openai_config import load_api_key
 
 from json_to_epp import agent2_json_to_epp
-from validation import validate_epp, ValidationError
+from validation import validate_epp
 
 WATCH_DIR = 'invoices_json'
 OUTPUT_DIR = 'epp_output'
@@ -95,27 +95,19 @@ def process_file(json_file):
     agent2_json_to_epp(json_file, tmp_epp)
     iter_no = 0
     while iter_no < MAX_ITER:
-        try:
-            report = validate_epp(tmp_epp)
-            path = save_validation_report(base, iter_no, json.dumps(report, indent=2))
+        report = validate_epp(tmp_epp)
+        report_path = save_validation_report(base, iter_no, json.dumps(report, indent=2))
+        if report.get("valid"):
             final_path = os.path.join(REPAIRED_DIR, os.path.basename(tmp_epp))
             shutil.move(tmp_epp, final_path)
-            log(f"{json_file} converted successfully. Validation report saved to {path}")
+            log(f"{json_file} converted successfully. Validation report saved to {report_path}")
             return
-        except ValidationError as e:
-            # e contains the full JSON report from the validator
-            error_path = save_validation_report(base, iter_no, str(e))
-            try:
-                report = json.loads(str(e))
-                log(f"Validation failed: {report.get('summary')} (report saved to {error_path})")
-            except json.JSONDecodeError:
-                # fall back to raw message
-                log(f"Validation failed: {e} (report saved to {error_path})")
+        else:
+            log(f"Validation failed: {report.get('errors')} (report saved to {report_path})")
             with open(tmp_epp, 'r', encoding='cp1250') as f:
                 epp_content = f.read()
             script_content = load_script()
-            # pass the raw JSON report to the AI for context
-            diff = call_ai(epp_content, str(e), script_content)
+            diff = call_ai(epp_content, json.dumps(report), script_content)
             diff_path = save_diff_patch(base, iter_no, diff)
             log(f"AI diff saved to {diff_path}\n{diff}")
             save_script_version(iter_no)
