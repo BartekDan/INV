@@ -38,6 +38,21 @@ def save_script_version(iteration):
     shutil.copy2(SCRIPT, dst)
 
 
+def save_validation_report(base, iteration, report_str):
+    os.makedirs(LOG_DIR, exist_ok=True)
+    path = os.path.join(LOG_DIR, f"{base}_validation_{iteration}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(report_str)
+    return path
+
+def save_diff_patch(base, iteration, diff_text):
+    os.makedirs(LOG_DIR, exist_ok=True)
+    path = os.path.join(LOG_DIR, f"{base}_diff_{iteration}.patch")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(diff_text)
+    return path
+
+
 def call_ai(epp_content, errors, script_content):
     import openai
     prompt = (
@@ -81,25 +96,28 @@ def process_file(json_file):
     iter_no = 0
     while iter_no < MAX_ITER:
         try:
-            validate_epp(tmp_epp)
+            report = validate_epp(tmp_epp)
+            path = save_validation_report(base, iter_no, json.dumps(report, indent=2))
             final_path = os.path.join(REPAIRED_DIR, os.path.basename(tmp_epp))
             shutil.move(tmp_epp, final_path)
-            log(f"{json_file} converted successfully")
+            log(f"{json_file} converted successfully. Validation report saved to {path}")
             return
         except ValidationError as e:
             # e contains the full JSON report from the validator
+            error_path = save_validation_report(base, iter_no, str(e))
             try:
                 report = json.loads(str(e))
-                log(f"Validation failed: {report.get('summary')}")
+                log(f"Validation failed: {report.get('summary')} (report saved to {error_path})")
             except json.JSONDecodeError:
                 # fall back to raw message
-                log(f"Validation failed: {e}")
+                log(f"Validation failed: {e} (report saved to {error_path})")
             with open(tmp_epp, 'r', encoding='cp1250') as f:
                 epp_content = f.read()
             script_content = load_script()
             # pass the raw JSON report to the AI for context
             diff = call_ai(epp_content, str(e), script_content)
-            log(f"AI diff:\n{diff}")
+            diff_path = save_diff_patch(base, iter_no, diff)
+            log(f"AI diff saved to {diff_path}\n{diff}")
             save_script_version(iter_no)
             apply_patch(diff)
             agent2_json_to_epp(json_file, tmp_epp)
