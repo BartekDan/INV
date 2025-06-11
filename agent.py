@@ -68,7 +68,7 @@ def call_ai(epp_content, errors, script_content):
             {"role": "system", "content": "You are an AI assistant."},
             {"role": "user", "content": prompt},
         ],
-        temperature=0,
+        temperature=1,
     )
     return response.choices[0].message.content
 
