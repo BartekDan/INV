@@ -175,7 +175,7 @@ def call_llm(epp_text: str) -> Dict[str, Any]:
         model=MODEL,
         messages=messages,
         response_format={"type": "json_object"},
-        temperature=0
+        temperature=1
     )
     return json.loads(rsp.choices[0].message.content)
 
