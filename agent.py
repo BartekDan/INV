@@ -32,11 +32,15 @@ LOG_FILE = ROOT / "logs" / "agent.log"
 LOG_FILE.parent.mkdir(exist_ok=True)
 
 
+
 def log(msg: str) -> None:
-    stamp = datetime.now().isoformat(timespec="seconds")
-    line = f"{stamp}  {msg}"
+    ts   = datetime.now().isoformat(timespec="seconds")
+    line = f"{ts}  {msg}"
     print(line)
-    LOG_FILE.write_text((LOG_FILE.read_text() + line + "\n") if LOG_FILE.exists() else line + "\n")
+    LOG_FILE.parent.mkdir(exist_ok=True)
+    with LOG_FILE.open("a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+
 
 
 # ─── helpers ──────────────────────────────────────────────
