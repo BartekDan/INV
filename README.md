@@ -17,6 +17,7 @@ Drop JSON files into `invoices_json/` and they will be converted to `.epp`.
 
 The agent validates the output and, if validation fails, asks an OpenAI model for a patch
 to fix the converter. Patched versions of the converter are stored in `script_versions/`.
+Each failing invoice is reprocessed up to three times with these patches applied.
 
 Final valid files are placed in `epp_repaired/`.
 

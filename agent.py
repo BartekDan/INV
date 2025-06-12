@@ -56,6 +56,15 @@ def save_reasoning(base, iteration, text):
     return path
 
 
+def backup_script(iteration: int) -> str:
+    """Save the current converter script before applying a patch."""
+    os.makedirs("script_versions", exist_ok=True)
+    base = Path(SCRIPT).name
+    dst = os.path.join("script_versions", f"{base}_{iteration}_orig")
+    shutil.copy(SCRIPT, dst)
+    return dst
+
+
 
 
 def process_file(json_file):
@@ -93,6 +102,7 @@ def process_file(json_file):
                 f"AI diff saved to {diff_path}\n{diff}"
             )
             if diff:
+                backup_script(iter_no)
                 apply_diff_to_script(diff, Path(SCRIPT), iter_no)
                 import importlib
                 importlib.reload(json_to_epp)
