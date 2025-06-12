@@ -138,6 +138,8 @@ set "valid": true and append the token COMPLIANT as the very last line.
 
 MODEL = "o3"  # updated to use o3 model
 
+SCRIPT_VERSIONS_DIR = pathlib.Path("script_versions")
+
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -242,7 +244,79 @@ def analyze_epp(epp_text: str, script_content: str) -> Dict[str, Any]:
     return json.loads(rsp.choices[0].message.content)
 
 
+def apply_diff_to_script(diff_text: str, script_path: pathlib.Path, iteration: int | None = None) -> pathlib.Path:
+    """Apply *diff_text* to *script_path* and write a new version.
+
+    The patched script replaces the original and is also stored inside
+    ``script_versions``.  The returned path points to the saved version.
+    """
+
+    if not diff_text.strip():
+        return script_path
+
+    from unidiff.patch import PatchSet
+
+    SCRIPT_VERSIONS_DIR.mkdir(exist_ok=True)
+
+    lines = script_path.read_text().splitlines(keepends=True)
+    patch = PatchSet(diff_text)
+    for patched_file in patch:
+        for hunk in patched_file:
+            start = hunk.source_start - 1
+            end = start + hunk.source_length
+            new_lines = [l.value for l in hunk.target_lines()]
+            lines[start:end] = new_lines
+
+    if iteration is None:
+        i = 0
+        base = script_path.name
+        while (SCRIPT_VERSIONS_DIR / f"{base}_{i}").exists():
+            i += 1
+    else:
+        i = iteration
+        base = script_path.name
+
+    new_path = SCRIPT_VERSIONS_DIR / f"{base}_{i}"
+    new_path.write_text("".join(lines))
+
+    script_path.write_text("".join(lines))
+
+    return new_path
+
+
 if __name__ == "__main__":
-    out = validate_epp(sys.argv[1])
-    # Guaranteed single-line JSON:
-    print(json.dumps(out, ensure_ascii=False))
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Validate EDI++ files")
+    parser.add_argument("epp_file", help="Path to .epp file to validate")
+    parser.add_argument(
+        "--script",
+        help="Conversion script to patch using the proposed diff",
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write a new version of the script if a diff is returned",
+    )
+    parser.add_argument(
+        "--iteration",
+        type=int,
+        default=None,
+        help="Version number for the saved script (default: next available)",
+    )
+
+    args = parser.parse_args()
+
+    if args.script and args.apply:
+        epp_text = pathlib.Path(args.epp_file).read_text(encoding="windows-1250")
+        script_path = pathlib.Path(args.script)
+        result = analyze_epp(epp_text, script_path.read_text())
+        print(json.dumps(result.get("report", {}), ensure_ascii=False))
+        diff = result.get("diff", "")
+        if diff and not result.get("report", {}).get("valid", False):
+            new_path = apply_diff_to_script(diff, script_path, args.iteration)
+            print(f"Patched script written to {new_path}")
+    else:
+        out = validate_epp(args.epp_file)
+        print(json.dumps(out, ensure_ascii=False))
+
