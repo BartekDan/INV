@@ -1,149 +1,141 @@
 """
-agent.py – JSON \u279c EDI++ “self‑healing” agent
-Re‑written 2025‑06‑12 to:
-• create a full *new* json_to_epp_vN.py each iteration
-• print the converter’s name & path on every run
-• no .patch files are left behind
+agent.py – JSON ➜ EDI++ self‑healing agent
+------------------------------------------
+• Watches invoices_json/ for *.json.
+• Converts with json_to_epp_vN.py (new copy per iteration).
+• Validates; on errors asks LLM for a patch.
+• Saves each full converter in script_versions/.
+• Logs converter file & absolute path every attempt.
 """
 
 from __future__ import annotations
 
-import importlib.util
-import json
-import shutil
-import time
+import importlib.util, json, shutil, time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
 
 from openai_config import load_api_key
-from validation import analyze_epp, apply_diff_to_script          # :contentReference[oaicite:4]{index=4}
+from validation import analyze_epp, apply_diff_to_script   # patched helper
 
-# --------------------------------------------------------------------------- #
-# Folders & constants
-# --------------------------------------------------------------------------- #
-ROOT           = Path(__file__).resolve().parent
-WATCH_DIR      = ROOT / "invoices_json"
-OUTPUT_DIR     = ROOT / "epp_output"
-REPAIRED_DIR   = ROOT / "epp_repaired"
-ARCHIVE_DIR    = ROOT / "epp_archive"
-VERSIONS_DIR   = ROOT / "script_versions"
-ORIGINAL_CONV  = ROOT / "json_to_epp.py"
+# ─── folders ──────────────────────────────────────────────
+ROOT         = Path(__file__).resolve().parent
+WATCH_DIR    = ROOT / "invoices_json"
+OUTPUT_DIR   = ROOT / "epp_output"
+REPAIRED_DIR = ROOT / "epp_repaired"
+ARCHIVE_DIR  = ROOT / "epp_archive"
+VERSIONS_DIR = ROOT / "script_versions"
+ORIGINAL_CNV = ROOT / "json_to_epp.py"
 
-MAX_ITER = 3                     # number of correction rounds per invoice
+MAX_ITER = 3
 LOG_FILE = ROOT / "logs" / "agent.log"
 LOG_FILE.parent.mkdir(exist_ok=True)
 
-# --------------------------------------------------------------------------- #
-# Utilities
-# --------------------------------------------------------------------------- #
+
 def log(msg: str) -> None:
     stamp = datetime.now().isoformat(timespec="seconds")
     line = f"{stamp}  {msg}"
     print(line)
-    with LOG_FILE.open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
+    LOG_FILE.write_text((LOG_FILE.read_text() + line + "\n") if LOG_FILE.exists() else line + "\n")
 
 
-def save_json(obj: Dict[str, Any] | str, path: Path) -> Path:
-    text = obj if isinstance(obj, str) else json.dumps(obj, indent=2, ensure_ascii=False)
+# ─── helpers ──────────────────────────────────────────────
+def save_json(obj: Dict[str, Any] | str, path: Path) -> None:
     path.parent.mkdir(exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    return path
+    txt = obj if isinstance(obj, str) else json.dumps(obj, indent=2, ensure_ascii=False)
+    path.write_text(txt, encoding="utf-8")
 
 
-def version_file(n: int) -> Path:
+def version_path(n: int) -> Path:
     VERSIONS_DIR.mkdir(exist_ok=True)
     return VERSIONS_DIR / f"json_to_epp_v{n}.py"
 
 
 def import_converter(path: Path, module_name: str):
-    """Import converter at *path* under *module_name* and return the module."""
     spec = importlib.util.spec_from_file_location(module_name, str(path))
-    module = importlib.util.module_from_spec(spec)
+    mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
-    spec.loader.exec_module(module)          # type: ignore[attr-defined]
-    return module
+    spec.loader.exec_module(mod)        # type: ignore[attr-defined]
+    return mod
 
 
-# --------------------------------------------------------------------------- #
-# Single‑file processing loop
-# --------------------------------------------------------------------------- #
-def process_file(json_path: Path) -> None:
-    base        = json_path.stem
-    tmp_epp     = OUTPUT_DIR / f"{base}.epp"
+# ─── core per‑file loop ──────────────────────────────────
+def process_file(json_file: Path) -> None:
+    base = json_file.stem
+    tmp_epp = OUTPUT_DIR / f"{base}.epp"
 
-    # --- make sure v0 exists ------------------------------------------------
+    # make sure v0 exists
     v = 0
-    current_conv = version_file(v)
-    if not current_conv.exists():
-        shutil.copy2(ORIGINAL_CONV, current_conv)
+    cur_cnv = version_path(v)
+    if not cur_cnv.exists():
+        shutil.copy2(ORIGINAL_CNV, cur_cnv)
 
     for attempt in range(MAX_ITER):
         mod_name = f"json_to_epp_v{v}"
-        conv_mod = import_converter(current_conv, mod_name)
-        log(f"Attempt {attempt+1}/{MAX_ITER}: using {current_conv.name}  →  {current_conv.resolve()}")
+        conv = import_converter(cur_cnv, mod_name)
+        log(f"Attempt {attempt+1}/{MAX_ITER}  –  using {cur_cnv.name} at {cur_cnv.resolve()}")
 
-        # 1⃣  Convert -------------------------------------------------------
-        conv_mod.agent2_json_to_epp(json_path, tmp_epp)
+        # 1) convert -----------------------------------------------------------------
+        try:
+            conv.agent2_json_to_epp(json_file, tmp_epp)
+        except Exception as crash:
+            log(f"💥 converter crashed: {crash!r}")
+            # Feed the crash text to LLM as a pseudo‑error so it can propose fix
+            fail_report = {"valid": False, "errors": [{"message": f"converter crash: {crash}"}]}
+            diff = ""
+            reasoning = str(crash)
+        else:
+            # 2) validate ------------------------------------------------------------
+            epp_txt = tmp_epp.read_text(encoding="cp1250", errors="ignore")
+            result = analyze_epp(epp_txt, cur_cnv.read_text(encoding="utf-8"))
+            fail_report = result.get("report", {})
+            diff = result.get("diff", "")
+            reasoning = result.get("reasoning", "")
 
-        # 2⃣  Validate & maybe propose fix ----------------------------------
-        epp_text = tmp_epp.read_text(encoding="cp1250", errors="ignore")
-        result   = analyze_epp(epp_text, current_conv.read_text(encoding="utf-8"))
-        report   = result.get("report", {})
-        diff     = result.get("diff", "")
-        reasoning= result.get("reasoning", "")
+        # store reports / reasoning
+        save_json(fail_report, ROOT / "logs" / f"{base}_validation_{attempt}.json")
+        save_json(reasoning,  ROOT / "logs" / f"{base}_reasoning_{attempt}.txt")
 
-        save_json(report,    ROOT / "logs" / f"{base}_validation_{attempt}.json")
-        save_json(reasoning, ROOT / "logs" / f"{base}_reasoning_{attempt}.txt")
-
-        if report.get("valid"):
+        if fail_report.get("valid"):
             REPAIRED_DIR.mkdir(exist_ok=True)
             shutil.move(tmp_epp, REPAIRED_DIR / tmp_epp.name)
-            log(f"✅ success – invoice repaired with {current_conv.name}")
+            log(f"✅ fixed with {cur_cnv.name}")
             return
 
         if not diff.strip():
-            log("⚠️  LLM returned no diff – bailing out early")
+            log("⚠️  LLM provided no diff – stop retries")
             break
 
-        # 3⃣  Build next full converter ------------------------------------
+        # 3) build next full converter ---------------------------------------------
         v += 1
-        next_conv = version_file(v)
-        shutil.copy2(current_conv, next_conv)                # start from prev ver
-        apply_diff_to_script(diff, next_conv)                # overwrite in‑place
-        current_conv = next_conv                             # switch for next loop
+        nxt = version_path(v)
+        shutil.copy2(cur_cnv, nxt)            # start from previous code
+        apply_diff_to_script(diff, nxt)       # overwrite in place
+        cur_cnv = nxt                         # switch
+    # end for
 
-    # ------------------------------------------------------------------- #
-    # After MAX_ITER attempts -> archive
-    # ------------------------------------------------------------------- #
     ARCHIVE_DIR.mkdir(exist_ok=True)
     shutil.move(tmp_epp, ARCHIVE_DIR / f"{base}_failed.epp")
-    log(f"🗄️  archived {json_path.name} after {attempt+1} attempt(s)")
+    log(f"🗄️  gave up on {json_file.name} after {attempt+1} attempt(s)")
 
 
-# --------------------------------------------------------------------------- #
-# Watcher loop (simple polling)
-# --------------------------------------------------------------------------- #
+# ─── directory watcher (polling) ──────────────────────────
 def watch() -> None:
     seen: Dict[Path, float] = {}
-    WATCH_DIR.mkdir(exist_ok=True)
-    OUTPUT_DIR.mkdir(exist_ok=True)
-
+    WATCH_DIR.mkdir(exist_ok=True); OUTPUT_DIR.mkdir(exist_ok=True)
     while True:
-        for j in WATCH_DIR.glob("*.json"):
-            mtime = j.stat().st_mtime
-            if seen.get(j) != mtime:
-                seen[j] = mtime
+        for js in WATCH_DIR.glob("*.json"):
+            mt = js.stat().st_mtime
+            if seen.get(js) != mt:
+                seen[js] = mt
                 try:
-                    process_file(j)
-                except Exception as exc:
-                    log(f"🚨 Unhandled error on {j.name}: {exc!r}")
+                    process_file(js)
+                except Exception as ex:
+                    log(f"🚨 unhandled error on {js.name}: {ex!r}")
         time.sleep(5)
 
 
-# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     load_api_key()
-    log("Self‑healing agent started")
+    log("agent started")
     watch()
