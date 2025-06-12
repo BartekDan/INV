@@ -1,19 +1,15 @@
 """
-agent.py – JSON \u279c EDI++ “self-healing” conversion agent
-------------------------------------------------------
-
-* Watches `invoices_json/` for *.json invoices.
-* Converts them with json_to_epp.agent2_json_to_epp.
-* Validates the `.epp`; on failure asks an LLM for a patch.
-* Applies the patch to `json_to_epp.py`, reloads, and retries.
-* Stops after MAX_ITER attempts (or sooner if the LLM has no fix).
+agent.py – JSON \u279c EDI++ “self‑healing” agent
+Re‑written 2025‑06‑12 to:
+• create a full *new* json_to_epp_vN.py each iteration
+• print the converter’s name & path on every run
+• no .patch files are left behind
 """
 
 from __future__ import annotations
 
-import importlib
+import importlib.util
 import json
-import os
 import shutil
 import time
 from datetime import datetime
@@ -21,147 +17,132 @@ from pathlib import Path
 from typing import Dict, Any
 
 from openai_config import load_api_key
-import json_to_epp  # will be hot-reloaded after every patch
-from json_to_epp import agent2_json_to_epp  # re-bound after reload
-from validation import analyze_epp, apply_diff_to_script     # exposes LLM & patch helper
+from validation import analyze_epp, apply_diff_to_script          # :contentReference[oaicite:4]{index=4}
 
 # --------------------------------------------------------------------------- #
-# Configuration – adjust paths to taste
+# Folders & constants
 # --------------------------------------------------------------------------- #
-WATCH_DIR     = Path("invoices_json")
-OUTPUT_DIR    = Path("epp_output")
-REPAIRED_DIR  = Path("epp_repaired")
-ARCHIVE_DIR   = Path("epp_archive")
-SCRIPT        = Path("json_to_epp.py")   # the converter we patch
-LOG_DIR       = Path("logs")
-SCRIPT_VERS   = Path("script_versions")
+ROOT           = Path(__file__).resolve().parent
+WATCH_DIR      = ROOT / "invoices_json"
+OUTPUT_DIR     = ROOT / "epp_output"
+REPAIRED_DIR   = ROOT / "epp_repaired"
+ARCHIVE_DIR    = ROOT / "epp_archive"
+VERSIONS_DIR   = ROOT / "script_versions"
+ORIGINAL_CONV  = ROOT / "json_to_epp.py"
 
-MAX_ITER = 3   # hard cap for attempts on a single file
+MAX_ITER = 3                     # number of correction rounds per invoice
+LOG_FILE = ROOT / "logs" / "agent.log"
+LOG_FILE.parent.mkdir(exist_ok=True)
 
 # --------------------------------------------------------------------------- #
-# Small helpers
+# Utilities
 # --------------------------------------------------------------------------- #
 def log(msg: str) -> None:
-    LOG_DIR.mkdir(exist_ok=True)
-    with open(LOG_DIR / "agent.log", "a", encoding="utf-8") as fp:
-        fp.write(f"{datetime.now().isoformat()}  {msg}\n")
-    print(msg)
+    stamp = datetime.now().isoformat(timespec="seconds")
+    line  = f"{stamp}  {msg}"
+    print(line)
+    LOG_FILE.write_text(LOG_FILE.read_text() + line + "\n" if LOG_FILE.exists() else line + "\n")
 
 
-def load_script() -> str:
-    return SCRIPT.read_text(encoding="utf-8")
-
-
-def _save(txt: str | Dict[str, Any], path: Path) -> Path:
+def save_json(obj: Dict[str, Any] | str, path: Path) -> Path:
+    text = obj if isinstance(obj, str) else json.dumps(obj, indent=2, ensure_ascii=False)
     path.parent.mkdir(exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fp:
-        fp.write(txt if isinstance(txt, str) else json.dumps(txt, indent=2))
+    path.write_text(text, encoding="utf-8")
     return path
 
 
-def save_validation_report(base: str, i: int, report: Dict[str, Any]) -> Path:
-    return _save(report, LOG_DIR / f"{base}_validation_{i}.json")
+def version_file(n: int) -> Path:
+    VERSIONS_DIR.mkdir(exist_ok=True)
+    return VERSIONS_DIR / f"json_to_epp_v{n}.py"
 
 
-def save_diff_patch(base: str, i: int, diff: str) -> Path:
-    return _save(diff, LOG_DIR / f"{base}_diff_{i}.patch")
-
-
-def save_reasoning(base: str, i: int, thoughts: str) -> Path:
-    return _save(thoughts, LOG_DIR / f"{base}_reasoning_{i}.txt")
-
-
-def backup_script(i: int) -> Path:
-    SCRIPT_VERS.mkdir(exist_ok=True)
-    dst = SCRIPT_VERS / f"{SCRIPT.name}_v{i}.bak"
-    shutil.copy2(SCRIPT, dst)
-    return dst
+def import_converter(path: Path, module_name: str):
+    """Import converter at *path* under *module_name* and return the module."""
+    spec = importlib.util.spec_from_file_location(module_name, str(path))
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)          # type: ignore[attr-defined]
+    return module
 
 
 # --------------------------------------------------------------------------- #
-# Core processing logic
+# Single‑file processing loop
 # --------------------------------------------------------------------------- #
-def process_file(json_file: Path) -> None:
-    """
-    Convert one JSON invoice \u279c validate \u279c (optionally) patch converter.
-    """
-    global agent2_json_to_epp   # we re-bind after hot-reload
-    base        = json_file.stem
+def process_file(json_path: Path) -> None:
+    base        = json_path.stem
     tmp_epp     = OUTPUT_DIR / f"{base}.epp"
 
-    for iteration in range(MAX_ITER):
-        # \u0031\u20e3  Convert -------------------------------------------------------
-        agent2_json_to_epp(json_file, tmp_epp)
+    # --- make sure v0 exists ------------------------------------------------
+    v = 0
+    current_conv = version_file(v)
+    if not current_conv.exists():
+        shutil.copy2(ORIGINAL_CONV, current_conv)
 
-        # \u0032\u20e3  Validate ------------------------------------------------------
-        epp_content = tmp_epp.read_text(encoding="cp1250", errors="ignore")
-        result      = analyze_epp(epp_content, load_script())   # LLM call
-        report      = result.get("report", {})
+    for attempt in range(MAX_ITER):
+        mod_name = f"json_to_epp_v{v}"
+        conv_mod = import_converter(current_conv, mod_name)
+        log(f"Attempt {attempt+1}/{MAX_ITER}: using {current_conv.name}  →  {current_conv.resolve()}")
 
-        report_path = save_validation_report(base, iteration, report)
+        # 1⃣  Convert -------------------------------------------------------
+        conv_mod.agent2_json_to_epp(json_path, tmp_epp)
 
-        # 2a. Success – move to repaired dir and exit
+        # 2⃣  Validate & maybe propose fix ----------------------------------
+        epp_text = tmp_epp.read_text(encoding="cp1250", errors="ignore")
+        result   = analyze_epp(epp_text, current_conv.read_text(encoding="utf-8"))
+        report   = result.get("report", {})
+        diff     = result.get("diff", "")
+        reasoning= result.get("reasoning", "")
+
+        save_json(report,    ROOT / "logs" / f"{base}_validation_{attempt}.json")
+        save_json(reasoning, ROOT / "logs" / f"{base}_reasoning_{attempt}.txt")
+
         if report.get("valid"):
             REPAIRED_DIR.mkdir(exist_ok=True)
-            final_path = REPAIRED_DIR / tmp_epp.name
-            shutil.move(tmp_epp, final_path)
-            log(f"\u2705 {json_file.name} OK \u2192 {final_path}  (report \u2192 {report_path})")
+            shutil.move(tmp_epp, REPAIRED_DIR / tmp_epp.name)
+            log(f"✅ success – invoice repaired with {current_conv.name}")
             return
 
-        # 2b. Failure – log details
-        diff       = result.get("diff", "")
-        reasoning  = result.get("reasoning", "")
-        log(f"\u274c {json_file.name} failed (iteration {iteration})  \u2013 see {report_path}")
-        save_diff_patch(base, iteration, diff)
-        save_reasoning(base, iteration, reasoning)
+        if not diff.strip():
+            log("⚠️  LLM returned no diff – bailing out early")
+            break
 
-        # \u0033\u20e3  Maybe patch the converter ------------------------------------
-        if diff.strip():
-            backup_script(iteration)
-            apply_diff_to_script(diff, SCRIPT, iteration)       # writes new code
-
-            # Hot-reload json_to_epp so the *next* iteration uses the patch
-            importlib.reload(json_to_epp)
-            agent2_json_to_epp = json_to_epp.agent2_json_to_epp
-        else:
-            log("\u26a0\ufe0f  LLM produced no diff; giving up early.")
-            break   # nothing more we can do automatically
+        # 3⃣  Build next full converter ------------------------------------
+        v += 1
+        next_conv = version_file(v)
+        shutil.copy2(current_conv, next_conv)                # start from prev ver
+        apply_diff_to_script(diff, next_conv)                # overwrite in‑place
+        current_conv = next_conv                             # switch for next loop
 
     # ------------------------------------------------------------------- #
-    # If we drop out of the loop, we never produced a valid file
+    # After MAX_ITER attempts -> archive
     # ------------------------------------------------------------------- #
     ARCHIVE_DIR.mkdir(exist_ok=True)
     shutil.move(tmp_epp, ARCHIVE_DIR / f"{base}_failed.epp")
-    log(f"\U0001f5c4\ufe0f  {json_file.name} archived after {iteration + 1} attempt(s)")
+    log(f"🗄️  archived {json_path.name} after {attempt+1} attempt(s)")
 
 
 # --------------------------------------------------------------------------- #
-# Very small watch-loop (polling; simple but cross-platform & dependency-free)
+# Watcher loop (simple polling)
 # --------------------------------------------------------------------------- #
-def watch_loop() -> None:
-    log(f"Watching {WATCH_DIR.resolve()} for invoices \u2026")
+def watch() -> None:
     seen: Dict[Path, float] = {}
     WATCH_DIR.mkdir(exist_ok=True)
     OUTPUT_DIR.mkdir(exist_ok=True)
 
     while True:
-        for path in WATCH_DIR.glob("*.json"):
-            mtime = path.stat().st_mtime
-            if seen.get(path) != mtime:     # new or modified file
-                time.sleep(1)               # debounce quick writes
-                seen[path] = mtime
+        for j in WATCH_DIR.glob("*.json"):
+            mtime = j.stat().st_mtime
+            if seen.get(j) != mtime:
+                seen[j] = mtime
                 try:
-                    process_file(path)
-                except Exception as exc:    # keep daemon alive
-                    log(f"\ud83d\udea8 Unhandled error on {path.name}: {exc!r}")
+                    process_file(j)
+                except Exception as exc:
+                    log(f"🚨 Unhandled error on {j.name}: {exc!r}")
+        time.sleep(5)
 
-        time.sleep(5)  # poll interval
 
-
-# --------------------------------------------------------------------------- #
-# Entry-point
 # --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     load_api_key()
-    log(f"Using json_to_epp at {json_to_epp.__file__}")
-    watch_loop()
+    log("Self‑healing agent started")
+    watch()
