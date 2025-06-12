@@ -4,7 +4,7 @@ from openai import OpenAI
 from typing import Dict, Any
 
 # Load the full EDI++ EPP 1.11 spec as a system prompt
-FULL_SPEC = '''
+FULL_SPEC = """
 ────────────────────────────────────────────────────────────────────────
 SYSTEM #3 – Full EDI ++ EPP v 1.11 specification (+ empirical rules)
 ────────────────────────────────────────────────────────────────────────
@@ -132,9 +132,9 @@ ADDITIONAL CONSISTENCY CHECKS
 • date_sale ≤ date_issue ≤ now.
 • if vendor_is_EU = 1 → vendor_country_prefix ≠ "PL".
 
-Remember: return exactly one JSON object following SYSTEM #2; if no ERRORs,
+Remember: return exactly one JSON object following SYSTEM #3; if no ERRORs,
 set "valid": true and append the token COMPLIANT as the very last line.
-'''
+"""
 
 MODEL = "o3"  # updated to use o3 model
 
@@ -148,34 +148,39 @@ SCHEMA = {
                 "type": "object",
                 "properties": {
                     "segment": {"type": "string"},
-                    "field":   {"type": "string"},
-                    "line":    {"type": "integer"},
-                    "message": {"type": "string"}
+                    "field": {"type": "string"},
+                    "line": {"type": "integer"},
+                    "message": {"type": "string"},
                 },
-                "required": ["message"]
-            }
+                "required": ["message"],
+            },
         },
     },
-    "required": ["valid", "errors"]
+    "required": ["valid", "errors"],
 }
+
 
 def call_llm(epp_text: str) -> Dict[str, Any]:
     client = OpenAI()
     messages = [
-        {"role": "system", "content": (
-            "You are an EDI++ 1.11 validator. Return EXACTLY one JSON object matching the schema from SYSTEM #2."
-        )},
+        {
+            "role": "system",
+            "content": (
+                "You are an EDI++ 1.11 validator. Return EXACTLY one JSON object matching the schema from SYSTEM #3."
+            ),
+        },
         {"role": "system", "content": json.dumps(SCHEMA)},
         {"role": "system", "content": FULL_SPEC},
-        {"role": "user",   "content": f"---BEGIN:EPP---\n{epp_text}\n---END:EPP---"}
+        {"role": "user", "content": f"---BEGIN:EPP---\n{epp_text}\n---END:EPP---"},
     ]
     rsp = client.chat.completions.create(
         model=MODEL,
         messages=messages,
         response_format={"type": "json_object"},
-        temperature=0
+        temperature=0.3,
     )
     return json.loads(rsp.choices[0].message.content)
+
 
 def validate_epp(path: str) -> Dict[str, Any]:
     try:
@@ -184,18 +189,58 @@ def validate_epp(path: str) -> Dict[str, Any]:
         # Fallback: if model says valid but regex finds obvious format bugs, flip the flag
         if result["valid"] and re.search(r"[^\r\n]{500,}", txt):
             result["valid"] = False
-            result["errors"].append({
-                "message": "Line longer than 500 chars → likely broken segment"
-            })
+            result["errors"].append(
+                {"message": "Line longer than 500 chars → likely broken segment"}
+            )
         return result
     except Exception:
         return {
             "valid": False,
-            "errors": [{
-                "message": "Validator crashed",
-                "trace": traceback.format_exc()
-            }]
+            "errors": [
+                {"message": "Validator crashed", "trace": traceback.format_exc()}
+            ],
         }
+
+
+def analyze_epp(epp_text: str, script_content: str) -> Dict[str, Any]:
+    """Validate the EPP text and propose fixes in a single LLM call.
+
+    Returns a JSON object with the following keys:
+    - ``report``: result of validation using the schema from ``SCHEMA``
+    - ``reasoning``: explanation of the proposed values and changes
+    - ``diff``: unified diff patch for the conversion script
+    """
+
+    client = OpenAI()
+    user_prompt = (
+        "Check the following EDI++ file against the specification. "
+        "If it is invalid, list the errors, propose values for any required "
+        "fields that are blank or missing, explain the reasoning and provide a "
+        "unified diff patch for the conversion script so the file would be "
+        "produced correctly in the future.\n"
+        "---BEGIN:EPP---\n" + epp_text + "\n---END:EPP---\n"
+        "---BEGIN:SCRIPT---\n" + script_content + "\n---END:SCRIPT---"
+    )
+    rsp = client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an expert in the EDI++ 1.11 format. Return JSON "
+                    "with keys 'report', 'reasoning' and 'diff'. The 'report' "
+                    "object must match the schema from SYSTEM #3."
+                ),
+            },
+            {"role": "system", "content": json.dumps(SCHEMA)},
+            {"role": "system", "content": FULL_SPEC},
+            {"role": "user", "content": user_prompt},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.3,
+    )
+    return json.loads(rsp.choices[0].message.content)
+
 
 if __name__ == "__main__":
     out = validate_epp(sys.argv[1])
