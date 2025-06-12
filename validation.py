@@ -237,7 +237,7 @@ def analyze_epp(epp_text: str, script_content: str) -> Dict[str, Any]:
             {"role": "user", "content": user_prompt},
         ],
         response_format={"type": "json_object"},
-        temperature=0.3,
+        temperature=1,
     )
     return json.loads(rsp.choices[0].message.content)
 
