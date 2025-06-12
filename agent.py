@@ -17,7 +17,7 @@ REPAIRED_DIR = "epp_repaired"
 ARCHIVE_DIR = "epp_archive"
 SCRIPT = "json_to_epp.py"
 LOG_DIR = "logs"
-MAX_ITER = 5
+MAX_ITER = 3
 
 
 def log(msg):
@@ -61,9 +61,10 @@ def save_reasoning(base, iteration, text):
 def process_file(json_file):
     base = os.path.splitext(os.path.basename(json_file))[0]
     tmp_epp = os.path.join(OUTPUT_DIR, base + ".epp")
-    agent2_json_to_epp(json_file, tmp_epp)
+    global agent2_json_to_epp
     iter_no = 0
     while iter_no < MAX_ITER:
+        agent2_json_to_epp(json_file, tmp_epp)
         with open(tmp_epp, "r", encoding="cp1250") as f:
             epp_content = f.read()
         script_content = load_script()
@@ -93,7 +94,9 @@ def process_file(json_file):
             )
             if diff:
                 apply_diff_to_script(diff, Path(SCRIPT), iter_no)
-            agent2_json_to_epp(json_file, tmp_epp)
+                import importlib
+                importlib.reload(json_to_epp)
+                agent2_json_to_epp = json_to_epp.agent2_json_to_epp
             iter_no += 1
     shutil.move(tmp_epp, os.path.join(ARCHIVE_DIR, base + "_failed.epp"))
     log(f"Failed to convert {json_file} after {MAX_ITER} attempts")
