@@ -39,9 +39,10 @@ LOG_FILE.parent.mkdir(exist_ok=True)
 # --------------------------------------------------------------------------- #
 def log(msg: str) -> None:
     stamp = datetime.now().isoformat(timespec="seconds")
-    line  = f"{stamp}  {msg}"
+    line = f"{stamp}  {msg}"
     print(line)
-    LOG_FILE.write_text(LOG_FILE.read_text() + line + "\n" if LOG_FILE.exists() else line + "\n")
+    with LOG_FILE.open("a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
 
 
 def save_json(obj: Dict[str, Any] | str, path: Path) -> Path:
