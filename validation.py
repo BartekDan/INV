@@ -258,7 +258,7 @@ def apply_diff_to_script(diff_text: str, script_path: pathlib.Path, iteration: i
 
     SCRIPT_VERSIONS_DIR.mkdir(exist_ok=True)
 
-    lines = script_path.read_text().splitlines(keepends=True)
+    lines = script_path.read_text(encoding="utf-8").splitlines(keepends=True)
 
     try:
         patch = PatchSet(diff_text)
@@ -286,9 +286,9 @@ def apply_diff_to_script(diff_text: str, script_path: pathlib.Path, iteration: i
         base = script_path.name
 
     new_path = SCRIPT_VERSIONS_DIR / f"{base}_{i}"
-    new_path.write_text("".join(lines))
+    new_path.write_text("".join(lines), encoding="utf-8")
 
-    script_path.write_text("".join(lines))
+    script_path.write_text("".join(lines), encoding="utf-8")
 
     return new_path
 
