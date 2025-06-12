@@ -7,6 +7,7 @@ from pathlib import Path
 
 from openai_config import load_api_key
 
+import json_to_epp
 from json_to_epp import agent2_json_to_epp
 from validation import analyze_epp, apply_diff_to_script
 
@@ -116,4 +117,5 @@ def watch_loop():
 
 if __name__ == "__main__":
     load_api_key()
+    log(f"Using json_to_epp module at {json_to_epp.__file__}")
     watch_loop()

@@ -258,14 +258,17 @@ def apply_diff_to_script(diff_text: str, script_path: pathlib.Path, iteration: i
 
     SCRIPT_VERSIONS_DIR.mkdir(exist_ok=True)
 
-    lines = script_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    original_lines = script_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    lines = original_lines[:]
 
     try:
         patch = PatchSet(diff_text)
     except Exception:
-        patch = []
+        patch = None
 
-    if patch and any(len(hunk) for p in patch for hunk in p):
+    has_hunks = patch and any(len(hunk) for p in patch for hunk in p)
+
+    if has_hunks:
         for patched_file in patch:
             for hunk in patched_file:
                 start = hunk.source_start - 1
@@ -273,8 +276,17 @@ def apply_diff_to_script(diff_text: str, script_path: pathlib.Path, iteration: i
                 new_lines = [l.value for l in hunk.target_lines()]
                 lines[start:end] = new_lines
     else:
-        # Fallback: treat diff as the full script when patch cannot be parsed
-        lines = diff_text.splitlines(keepends=True)
+        # Unable to apply diff; store it for reference and keep script unchanged
+        if iteration is None:
+            i = 0
+            base = script_path.name
+            while (SCRIPT_VERSIONS_DIR / f"{base}_{i}.patch").exists():
+                i += 1
+        else:
+            i = iteration
+            base = script_path.name
+        (SCRIPT_VERSIONS_DIR / f"{base}_{i}.patch").write_text(diff_text, encoding="utf-8")
+        return script_path
 
     if iteration is None:
         i = 0
