@@ -1,21 +1,20 @@
 import os
 import time
 import shutil
-import subprocess
 import json
 from datetime import datetime
+from pathlib import Path
 
 from openai_config import load_api_key
 
 from json_to_epp import agent2_json_to_epp
-from validation import analyze_epp
+from validation import analyze_epp, apply_diff_to_script
 
 WATCH_DIR = "invoices_json"
 OUTPUT_DIR = "epp_output"
 REPAIRED_DIR = "epp_repaired"
 ARCHIVE_DIR = "epp_archive"
 SCRIPT = "json_to_epp.py"
-SCRIPT_VERSIONS = "script_versions"
 LOG_DIR = "logs"
 MAX_ITER = 5
 
@@ -30,12 +29,6 @@ def log(msg):
 def load_script():
     with open(SCRIPT, "r") as f:
         return f.read()
-
-
-def save_script_version(iteration):
-    os.makedirs(SCRIPT_VERSIONS, exist_ok=True)
-    dst = os.path.join(SCRIPT_VERSIONS, f"{os.path.basename(SCRIPT)}_{iteration}")
-    shutil.copy2(SCRIPT, dst)
 
 
 def save_validation_report(base, iteration, report_str):
@@ -62,21 +55,6 @@ def save_reasoning(base, iteration, text):
     return path
 
 
-def apply_patch(diff_text):
-    import unidiff
-    from unidiff.patch import PatchSet
-
-    patch = PatchSet(diff_text)
-    with open(SCRIPT, "r") as f:
-        lines = f.readlines()
-    for patched_file in patch:
-        for hunk in patched_file:
-            start = hunk.source_start - 1
-            end = start + hunk.source_length
-            new_lines = [l.value for l in hunk.target_lines()]
-            lines[start:end] = new_lines
-    with open(SCRIPT, "w") as f:
-        f.writelines(lines)
 
 
 def process_file(json_file):
@@ -112,8 +90,8 @@ def process_file(json_file):
                 f"AI reasoning saved to {reasoning_path}\n{reasoning}\n"
                 f"AI diff saved to {diff_path}\n{diff}"
             )
-            save_script_version(iter_no)
-            apply_patch(diff)
+            if diff:
+                apply_diff_to_script(diff, Path(SCRIPT), iter_no)
             agent2_json_to_epp(json_file, tmp_epp)
             iter_no += 1
     shutil.move(tmp_epp, os.path.join(ARCHIVE_DIR, base + "_failed.epp"))
