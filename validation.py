@@ -143,6 +143,7 @@ ADDITIONAL CONSISTENCY CHECKS
 
 Remember: return exactly one JSON object following SYSTEM #3; if no ERRORs,
 set "valid": true and append the token COMPLIANT as the very last line.
+List every error in json with reasononing. Don't just list general statistics. 
 """
 
 
