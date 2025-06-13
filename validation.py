@@ -1,15 +1,8 @@
-"""
-validation.py – LLM validator + patch helper
-• call_llm()      → validate only (valid + errors)
-• analyze_epp()   → validate + reasoning + diff
-• apply_diff_to_script() handles unified diff / fenced diff / full file
-"""
+# validation.py  (rev‑detailed)
 
-from __future__ import annotations
-import json, re, pathlib, traceback
+import json, pathlib, re, traceback
 from textwrap import dedent
 from typing import Dict, Any
-
 from openai import OpenAI
 from unidiff.patch import PatchSet
 
@@ -17,11 +10,10 @@ MODEL = "o3"
 SCRIPT_VERSIONS_DIR = pathlib.Path("script_versions")
 SCRIPT_VERSIONS_DIR.mkdir(exist_ok=True)
 
-# ────────────────────────────────────────────────────────────────
-#  SYSTEM #3 – Full EDI ++ EPP v 1.11 specification (+ empirical rules)
-#  (verbatim text supplied by the user)
-# ────────────────────────────────────────────────────────────────
-FULL_SPEC = r"""
+# ────────────────────────────────────────────────────────────
+#  FULL_SPEC – paste the **unchanged** SYSTEM #3 block here
+# ────────────────────────────────────────────────────────────
+FULL_SPEC =  r"""
 SYSTEM #3 – Full EDI ++ EPP v 1.11 specification (+ empirical rules)
 ────────────────────────────────────────────────────────────────────────
 📂 FILE LAYOUT
@@ -37,6 +29,7 @@ SYSTEM #3 – Full EDI ++ EPP v 1.11 specification (+ empirical rules)
   • Logiczne  → accept (true,t,yes,y,1,on,tak) ⇒ 1; (false,f,no,n,0,off,nie) ⇒ 0.
   • Bajt/Int  → 0-255; if enum, coerce to nearest allowed else 0.
   • **Reserved** fields must always contain their defined value; if a field has no value, it must be encoded as an empty string literal ("").
+  • If the field is "non-empty" or "always value" use reason to propose a value using other values that fits the field and meets data type requirements. 
 
 ═══════════════════════════════════════════════════════════════════════
 [INFO] – 24 columns
@@ -152,9 +145,10 @@ Remember: return exactly one JSON object following SYSTEM #3; if no ERRORs,
 set "valid": true and append the token COMPLIANT as the very last line.
 """
 
-# ────────────────────────────────────────────────────────────────
-#  Unified schema (allows extra keys report/reasoning/diff)
-# ────────────────────────────────────────────────────────────────
+
+# ────────────────────────────────────────────────────────────
+#  Unified schema – diff must now be non‑empty
+# ────────────────────────────────────────────────────────────
 SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -162,20 +156,18 @@ SCHEMA: Dict[str, Any] = {
         "errors": {"type": "array", "items": {"type": "object"}},
         "report":    {"type": "object"},
         "reasoning": {"type": "string"},
-        "diff":      {"type": "string"},
+        "diff":      {"type": "string", "minLength": 1},   # ← force content
     },
-    "required": ["valid", "errors"],
+    "required": ["valid", "errors", "report", "reasoning", "diff"],
 }
 
-# ────────────────────────────────────────────────────────────────
-#  Thin validator – used by validate_epp()
-# ────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────
 def call_llm(epp_text: str) -> Dict[str, Any]:
-    client = OpenAI()
-    rsp = client.chat.completions.create(
+    """Pure validation (no diff)."""
+    rsp = OpenAI().chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
-        temperature=0.3,
+        temperature=0.2,
         messages=[
             {"role": "system", "content": "You are an EDI++ 1.11 validator; output JSON."},
             {"role": "system", "content": json.dumps(SCHEMA)},
@@ -185,29 +177,28 @@ def call_llm(epp_text: str) -> Dict[str, Any]:
     )
     return json.loads(rsp.choices[0].message.content)
 
-
 def validate_epp(path: str) -> Dict[str, Any]:
     try:
         txt = pathlib.Path(path).read_text("windows-1250")
         return call_llm(txt)
     except Exception:
-        return {
-            "valid": False,
-            "errors": [{"message": "validator crash", "trace": traceback.format_exc()}],
-        }
+        return {"valid": False,
+                "errors": [{"message": "validator crash",
+                            "trace": traceback.format_exc()}]}
 
-# ────────────────────────────────────────────────────────────────
-#  Analyse-and-patch helper
-# ────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────
+#  Analyse + patch – always expects a diff
+# ────────────────────────────────────────────────────────────
 def analyze_epp(epp_text: str, script_code: str) -> Dict[str, Any]:
-    client = OpenAI()
-    user = (
+    insist = (
         "Check this EPP; if invalid return JSON with keys 'report', "
-        "'reasoning', 'diff'.\n"
+        "'reasoning', 'diff'. Your 'errors' list must enumerate *every* "
+        "missing or invalid field. 'diff' must be a unified diff that, when "
+        "applied to the converter script, prevents these errors.\n"
         "---BEGIN:EPP---\n"   + epp_text   + "\n---END:EPP---\n"
         "---BEGIN:SCRIPT---\n" + script_code + "\n---END:SCRIPT---"
     )
-    rsp = client.chat.completions.create(
+    rsp = OpenAI().chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
         temperature=1,
@@ -215,14 +206,14 @@ def analyze_epp(epp_text: str, script_code: str) -> Dict[str, Any]:
             {"role": "system", "content": "You are an EDI++ expert; follow schema."},
             {"role": "system", "content": json.dumps(SCHEMA)},
             {"role": "system", "content": FULL_SPEC},
-            {"role": "user",   "content": user},
+            {"role": "user",   "content": insist},
         ],
     )
     return json.loads(rsp.choices[0].message.content)
 
-# ────────────────────────────────────────────────────────────────
-#  Patch applier
-# ────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────
+#  Patch applier – identical to your current implementation
+# ────────────────────────────────────────────────────────────
 FENCE_RE = re.compile(r"```(?:diff|patch)?\s+(.*?)```", re.S)
 
 def apply_diff_to_script(diff: str, script_path: pathlib.Path) -> pathlib.Path:
@@ -232,7 +223,6 @@ def apply_diff_to_script(diff: str, script_path: pathlib.Path) -> pathlib.Path:
     if m:
         diff = m.group(1).strip()
     is_full_file = not diff.lstrip().startswith(("diff", "@@", "---"))
-    # ignore non-Python “full” files
     if is_full_file and ("def " not in diff and "import " not in diff):
         (SCRIPT_VERSIONS_DIR / (script_path.stem + ".patch")).write_text(diff, "utf-8")
         return script_path
@@ -244,14 +234,13 @@ def apply_diff_to_script(diff: str, script_path: pathlib.Path) -> pathlib.Path:
         except Exception:
             patch = PatchSet()
         if not any(len(h) for p in patch for h in p):
-            (SCRIPT_VERSIONS_DIR / (script_path.stem + ".patch")
-             ).write_text(diff, "utf-8")
+            (SCRIPT_VERSIONS_DIR / (script_path.stem + ".patch")).write_text(diff, "utf-8")
             return script_path
         lines = script_path.read_text("utf-8").splitlines(keepends=True)
         for p in patch:
             for h in p:
                 start = h.source_start - 1
-                end   = start + h.source_length
+                end = start + h.source_length
                 lines[start:end] = [l.value for l in h.target_lines()]
         new_code = "".join(lines)
     i = 0
@@ -261,22 +250,3 @@ def apply_diff_to_script(diff: str, script_path: pathlib.Path) -> pathlib.Path:
     new_path.write_text(new_code, "utf-8")
     script_path.write_text(new_code, "utf-8")
     return new_path
-
-# ────────────────────────────────────────────────────────────────
-#  CLI helper
-# ────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    import argparse
-    p = argparse.ArgumentParser()
-    p.add_argument("epp"); p.add_argument("--script")
-    args = p.parse_args()
-    rpt = validate_epp(args.epp)
-    print(json.dumps(rpt, ensure_ascii=False, indent=2))
-    if args.script and (not rpt["valid"]):
-        sc   = pathlib.Path(args.script)
-        diff = analyze_epp(
-            pathlib.Path(args.epp).read_text("windows-1250"),
-            sc.read_text()
-        ).get("diff", "")
-        apply_diff_to_script(diff, sc)
-        print("patched converter →", sc)
