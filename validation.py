@@ -228,13 +228,14 @@ FENCE_RE = re.compile(r"```(?:diff|patch)?\s+(.*?)```", re.S)
 def apply_diff_to_script(diff: str, script_path: pathlib.Path) -> pathlib.Path:
     if not diff.strip():
         return script_path
-
     m = FENCE_RE.search(diff)
     if m:
         diff = m.group(1).strip()
-
     is_full_file = not diff.lstrip().startswith(("diff", "@@", "---"))
-
+    # ignore non-Python “full” files
+    if is_full_file and ("def " not in diff and "import " not in diff):
+        (SCRIPT_VERSIONS_DIR / (script_path.stem + ".patch")).write_text(diff, "utf-8")
+        return script_path
     if is_full_file:
         new_code = dedent(diff).strip("\n") + "\n"
     else:
@@ -246,16 +247,13 @@ def apply_diff_to_script(diff: str, script_path: pathlib.Path) -> pathlib.Path:
             (SCRIPT_VERSIONS_DIR / (script_path.stem + ".patch")
              ).write_text(diff, "utf-8")
             return script_path
-
-        original = script_path.read_text("utf-8").splitlines(keepends=True)
-        new_code = original[:]
+        lines = script_path.read_text("utf-8").splitlines(keepends=True)
         for p in patch:
             for h in p:
                 start = h.source_start - 1
                 end   = start + h.source_length
-                new_code[start:end] = [l.value for l in h.target_lines()]
-        new_code = "".join(new_code)
-
+                lines[start:end] = [l.value for l in h.target_lines()]
+        new_code = "".join(lines)
     i = 0
     while (SCRIPT_VERSIONS_DIR / f"{script_path.stem}_v{i}.py").exists():
         i += 1

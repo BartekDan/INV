@@ -75,9 +75,17 @@ def process_file(json_file: Path) -> None:
         shutil.copy2(ORIGINAL_CNV, cur_cnv)
 
     for attempt in range(MAX_ITER):
+        # --- import converter (catch syntax errors) ----------------------
         mod_name = f"json_to_epp_v{v}"
-        conv = import_converter(cur_cnv, mod_name)
-        log(f"Attempt {attempt+1}/{MAX_ITER}  –  using {cur_cnv.name} at {cur_cnv.resolve()}")
+        try:
+            conv = import_converter(cur_cnv, mod_name)
+        except Exception as crash:
+            log(f"💥 cannot import {cur_cnv.name}: {crash!r}")
+            fail_report = {"valid": False,
+                           "errors": [{"message": f"import crash: {crash}"}]}
+            save_json(fail_report, ROOT / "logs" / f"{base}_validation_{attempt}.json")
+            break  # skip conversion, archive after loop
+        log(f"Attempt {attempt+1}/{MAX_ITER}  –  using {cur_cnv.resolve()}")
 
         # 1) convert -----------------------------------------------------------------
         try:
