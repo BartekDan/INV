@@ -216,72 +216,82 @@ def analyze_epp(epp_text: str, script_code: str) -> Dict[str, Any]:
 # ────────────────────────────────────────────────────────────
 FENCE_RE = re.compile(r"```(?:diff|patch)?\s+(.*?)```", re.S)
 
+# ─── replace the whole function in validation.py ─────────────────────────
 def apply_diff_to_script(diff: str, script_path: pathlib.Path) -> pathlib.Path:
     """
-    Apply *diff* to *script_path*.  If the diff has no hunks we ask the model
-    once more to regenerate the full file.  Returns the new converter Path.
+    Try to apply *diff* to *script_path*.
+
+    • Supports fenced ```diff blocks.
+    • If the diff has leading commentary, it is stripped.
+    • If no hunks remain, the LLM is asked once to regenerate the full script.
+    • Returns the path of the NEW converter (still script_path for in‑place).
     """
     if not diff.strip():
-        return script_path                       # nothing to do
+        return script_path                        # nothing to do
 
-    # 1️⃣  Unwrap ``` fences and drop leading chatter
-    m = FENCE_RE.search(diff)
-    if m:
-        diff = m.group(1).strip()
-    # remove everything before the first diff marker
+    # 1️⃣ unwrap ``` fenced block, if present
+    fence = re.search(r"```(?:diff|patch)?\s+(.*?)```", diff, re.S)
+    if fence:
+        diff = fence.group(1).strip()
+
+    # 2️⃣ drop chatter before the first diff marker
     for marker in ("\n--- ", "\ndiff ", "\n@@"):
-        pos = diff.find(marker)
-        if pos != -1:
-            diff = diff[pos + 1:]                # skip leading \n
+        idx = diff.find(marker)
+        if idx != -1:
+            diff = diff[idx + 1:]                 # skip leading \n
             break
 
-    # helper to write a new version safely
+    # helper to write a NEW version and atomically replace active script
     def _write_new(code: str) -> pathlib.Path:
         i = 0
         while (SCRIPT_VERSIONS_DIR / f"{script_path.stem}_v{i}.py").exists():
             i += 1
         new_path = SCRIPT_VERSIONS_DIR / f"{script_path.stem}_v{i}.py"
         new_path.write_text(code, "utf-8")
-        script_path.write_text(code, "utf-8")    # atomic replace
+        script_path.write_text(code, "utf-8")
         return new_path
 
-    # 2️⃣  Try unified patch first
+    # 3️⃣ try to apply as unified diff
     try:
         patch = PatchSet(diff)
     except Exception:
-        patch = PatchSet()                       # empty → fallback
+        patch = PatchSet()
 
-    if any(len(h) for p in patch for h in p):    # at least one hunk
-        original = script_path.read_text("utf-8").splitlines(keepends=True)
-        new_code = original[:]
+    if any(len(h) for p in patch for h in p):     # we have hunks
+        lines = script_path.read_text("utf-8").splitlines(keepends=True)
         for p in patch:
             for h in p:
                 start = h.source_start - 1
                 end   = start + h.source_length
-                new_code[start:end] = [l.value for l in h.target_lines()]
-        return _write_new("".join(new_code))
+                lines[start:end] = [l.value for l in h.target_lines()]
+        return _write_new("".join(lines))
 
-    # 3️⃣  Ask model to regenerate full converter (one‑shot)
+    # 4️⃣ fallback – ask model to regenerate full file
     regen_prompt = (
-        "Rewrite the entire converter script so that the following EPP errors "
-        "are fixed.  Return *only* valid Python code, no commentary.\n\n"
-        + diff[:1500]  # include the short diff for context
+        "Rewrite the entire converter so that these changes are incorporated. "
+        "Return ONLY valid Python code, no commentary:\n\n"
+        + diff[:1500]  # pass trimmed diff for context
     )
     try:
-        regen = OpenAI().chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "user", "content": regen_prompt}],
-            temperature=0.3
-        ).choices[0].message.content
+        regen_code = (
+            OpenAI()
+            .chat.completions.create(
+                model=MODEL,
+                temperature=1,
+                messages=[{"role": "user", "content": regen_prompt}],
+            )
+            .choices[0]
+            .message.content
+        )
     except Exception:
-        # last resort → keep old script, store patch
+        # give up – store unusable diff and leave script unchanged
         (SCRIPT_VERSIONS_DIR / (script_path.stem + ".patch")).write_text(diff, "utf-8")
         return script_path
 
-    # sanity‑check regenerated code
-    if "def " in regen and "import " in regen:
-        return _write_new(dedent(regen).strip("\n") + "\n")
+    # simple sanity: must contain a def or import
+    if "def " in regen_code or "import " in regen_code:
+        return _write_new(dedent(regen_code).strip("\n") + "\n")
 
-    # still unusable → store patch, keep old script
+    # still unusable → store patch, keep old converter
     (SCRIPT_VERSIONS_DIR / (script_path.stem + ".patch")).write_text(diff, "utf-8")
     return script_path
