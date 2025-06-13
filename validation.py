@@ -192,8 +192,8 @@ def validate_epp(path: str) -> Dict[str, Any]:
 def analyze_epp(epp_text: str, script_code: str) -> Dict[str, Any]:
     insist = (
         "Check this EPP; if invalid return JSON with keys 'report', "
-        "'reasoning', 'diff'. Your 'errors' list must enumerate *every* "
-        "missing or invalid field. 'diff' must be a unified diff that, when "
+        "'reasoning', 'diff'. List every invalid field in 'errors', "
+    "not just the first one.\n 'diff' must be a unified diff that, when "
         "applied to the converter script, prevents these errors.\n"
         "---BEGIN:EPP---\n"   + epp_text   + "\n---END:EPP---\n"
         "---BEGIN:SCRIPT---\n" + script_code + "\n---END:SCRIPT---"
@@ -201,7 +201,7 @@ def analyze_epp(epp_text: str, script_code: str) -> Dict[str, Any]:
     rsp = OpenAI().chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
-        temperature=1,
+        temperature=0.7,
         messages=[
             {"role": "system", "content": "You are an EDI++ expert; follow schema."},
             {"role": "system", "content": json.dumps(SCHEMA)},
@@ -217,36 +217,71 @@ def analyze_epp(epp_text: str, script_code: str) -> Dict[str, Any]:
 FENCE_RE = re.compile(r"```(?:diff|patch)?\s+(.*?)```", re.S)
 
 def apply_diff_to_script(diff: str, script_path: pathlib.Path) -> pathlib.Path:
+    """
+    Apply *diff* to *script_path*.  If the diff has no hunks we ask the model
+    once more to regenerate the full file.  Returns the new converter Path.
+    """
     if not diff.strip():
-        return script_path
+        return script_path                       # nothing to do
+
+    # 1️⃣  Unwrap ``` fences and drop leading chatter
     m = FENCE_RE.search(diff)
     if m:
         diff = m.group(1).strip()
-    is_full_file = not diff.lstrip().startswith(("diff", "@@", "---"))
-    if is_full_file and ("def " not in diff and "import " not in diff):
-        (SCRIPT_VERSIONS_DIR / (script_path.stem + ".patch")).write_text(diff, "utf-8")
-        return script_path
-    if is_full_file:
-        new_code = dedent(diff).strip("\n") + "\n"
-    else:
-        try:
-            patch = PatchSet(diff)
-        except Exception:
-            patch = PatchSet()
-        if not any(len(h) for p in patch for h in p):
-            (SCRIPT_VERSIONS_DIR / (script_path.stem + ".patch")).write_text(diff, "utf-8")
-            return script_path
-        lines = script_path.read_text("utf-8").splitlines(keepends=True)
+    # remove everything before the first diff marker
+    for marker in ("\n--- ", "\ndiff ", "\n@@"):
+        pos = diff.find(marker)
+        if pos != -1:
+            diff = diff[pos + 1:]                # skip leading \n
+            break
+
+    # helper to write a new version safely
+    def _write_new(code: str) -> pathlib.Path:
+        i = 0
+        while (SCRIPT_VERSIONS_DIR / f"{script_path.stem}_v{i}.py").exists():
+            i += 1
+        new_path = SCRIPT_VERSIONS_DIR / f"{script_path.stem}_v{i}.py"
+        new_path.write_text(code, "utf-8")
+        script_path.write_text(code, "utf-8")    # atomic replace
+        return new_path
+
+    # 2️⃣  Try unified patch first
+    try:
+        patch = PatchSet(diff)
+    except Exception:
+        patch = PatchSet()                       # empty → fallback
+
+    if any(len(h) for p in patch for h in p):    # at least one hunk
+        original = script_path.read_text("utf-8").splitlines(keepends=True)
+        new_code = original[:]
         for p in patch:
             for h in p:
                 start = h.source_start - 1
-                end = start + h.source_length
-                lines[start:end] = [l.value for l in h.target_lines()]
-        new_code = "".join(lines)
-    i = 0
-    while (SCRIPT_VERSIONS_DIR / f"{script_path.stem}_v{i}.py").exists():
-        i += 1
-    new_path = SCRIPT_VERSIONS_DIR / f"{script_path.stem}_v{i}.py"
-    new_path.write_text(new_code, "utf-8")
-    script_path.write_text(new_code, "utf-8")
-    return new_path
+                end   = start + h.source_length
+                new_code[start:end] = [l.value for l in h.target_lines()]
+        return _write_new("".join(new_code))
+
+    # 3️⃣  Ask model to regenerate full converter (one‑shot)
+    regen_prompt = (
+        "Rewrite the entire converter script so that the following EPP errors "
+        "are fixed.  Return *only* valid Python code, no commentary.\n\n"
+        + diff[:1500]  # include the short diff for context
+    )
+    try:
+        regen = OpenAI().chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": regen_prompt}],
+            temperature=0.3
+        ).choices[0].message.content
+    except Exception:
+        # last resort → keep old script, store patch
+        (SCRIPT_VERSIONS_DIR / (script_path.stem + ".patch")).write_text(diff, "utf-8")
+        return script_path
+
+    # sanity‑check regenerated code
+    if "def " in regen and "import " in regen:
+        return _write_new(dedent(regen).strip("\n") + "\n")
+
+    # still unusable → store patch, keep old script
+    (SCRIPT_VERSIONS_DIR / (script_path.stem + ".patch")).write_text(diff, "utf-8")
+    return script_path
