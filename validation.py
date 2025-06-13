@@ -1,19 +1,25 @@
-# validation.py  (rev‑detailed)
+"""
+validation.py – LLM validator + patch helper (full-script regeneration)
+"""
 
-import json, pathlib, re, traceback
+from __future__ import annotations
+import json
+import pathlib
+import re
+import traceback
 from textwrap import dedent
 from typing import Dict, Any
+
 from openai import OpenAI
-from unidiff.patch import PatchSet
 
 MODEL = "o3"
 SCRIPT_VERSIONS_DIR = pathlib.Path("script_versions")
 SCRIPT_VERSIONS_DIR.mkdir(exist_ok=True)
 
-# ────────────────────────────────────────────────────────────
-#  FULL_SPEC – paste the **unchanged** SYSTEM #3 block here
-# ────────────────────────────────────────────────────────────
-FULL_SPEC =  r"""
+# ──────────────────────────────────────────────────────────────────────────
+# FULL_SPEC – paste your entire SYSTEM #3 block here, verbatim (no edits)
+# ──────────────────────────────────────────────────────────────────────────
+FULL_SPEC = r"""
 SYSTEM #3 – Full EDI ++ EPP v 1.11 specification (+ empirical rules)
 ────────────────────────────────────────────────────────────────────────
 📂 FILE LAYOUT
@@ -146,29 +152,29 @@ set "valid": true and append the token COMPLIANT as the very last line.
 List every error in json with reasononing. Don't just list general statistics. 
 """
 
-
-# ────────────────────────────────────────────────────────────
-#  Unified schema – diff must now be non‑empty
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────
+# SCHEMA – require full script every time
+# ──────────────────────────────────────────────────────────────────────────
 SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
         "valid":  {"type": "boolean"},
-        "errors": {"type": "array", "items": {"type": "object"}},
+        "errors": {"type": "array",   "items": {"type": "object"}},
         "report":    {"type": "object"},
         "reasoning": {"type": "string"},
-        "diff":      {"type": "string", "minLength": 1},   # ← force content
+        "new_script": {"type": "string", "minLength": 1},
     },
-    "required": ["valid", "errors", "report", "reasoning", "diff"],
+    "required": ["valid", "errors", "report", "reasoning", "new_script"],
 }
 
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────
 def call_llm(epp_text: str) -> Dict[str, Any]:
-    """Pure validation (no diff)."""
-    rsp = OpenAI().chat.completions.create(
+    """Simple validation – no diff returned here."""
+    client = OpenAI()
+    rsp = client.chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
-        temperature=1,
+        temperature=0.3,
         messages=[
             {"role": "system", "content": "You are an EDI++ 1.11 validator; output JSON."},
             {"role": "system", "content": json.dumps(SCHEMA)},
@@ -179,27 +185,39 @@ def call_llm(epp_text: str) -> Dict[str, Any]:
     return json.loads(rsp.choices[0].message.content)
 
 def validate_epp(path: str) -> Dict[str, Any]:
+    """File-based entry point for pure validation (no script regeneration)."""
     try:
         txt = pathlib.Path(path).read_text("windows-1250")
         return call_llm(txt)
     except Exception:
-        return {"valid": False,
-                "errors": [{"message": "validator crash",
-                            "trace": traceback.format_exc()}]}
+        return {
+            "valid": False,
+            "errors": [{"message": "validator crash", "trace": traceback.format_exc()}],
+        }
 
-# ────────────────────────────────────────────────────────────
-#  Analyse + patch – always expects a diff
-# ────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────
 def analyze_epp(epp_text: str, script_code: str) -> Dict[str, Any]:
-    insist = (
+    """
+    One-shot validation + full-script proposal.
+    Returns JSON with keys:
+      • report     – validation result
+      • reasoning  – human explanation
+      • new_script – full updated json_to_epp.py code
+    """
+    client = OpenAI()
+    prompt = (
         "Check this EPP; if invalid return JSON with keys 'report', "
-        "'reasoning', 'diff'. List every invalid field in 'errors', "
-    "not just the first one.\n 'diff' must be a unified diff that, when "
-        "applied to the converter script, prevents these errors.\n"
-        "---BEGIN:EPP---\n"   + epp_text   + "\n---END:EPP---\n"
-        "---BEGIN:SCRIPT---\n" + script_code + "\n---END:SCRIPT---"
+        "'reasoning', 'new_script'. The 'errors' list must enumerate *every* "
+        "missing or invalid field. 'new_script' must be a complete Python "
+        "converter that, when used, prevents these errors.\n"
+        "---BEGIN:EPP---\n"
+        + epp_text
+        + "\n---END:EPP---\n"
+        "---BEGIN:SCRIPT---\n"
+        + script_code
+        + "\n---END:SCRIPT---"
     )
-    rsp = OpenAI().chat.completions.create(
+    rsp = client.chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
         temperature=1,
@@ -207,92 +225,7 @@ def analyze_epp(epp_text: str, script_code: str) -> Dict[str, Any]:
             {"role": "system", "content": "You are an EDI++ expert; follow schema."},
             {"role": "system", "content": json.dumps(SCHEMA)},
             {"role": "system", "content": FULL_SPEC},
-            {"role": "user",   "content": insist},
+            {"role": "user",   "content": prompt},
         ],
     )
     return json.loads(rsp.choices[0].message.content)
-
-# ────────────────────────────────────────────────────────────
-#  Patch applier – identical to your current implementation
-# ────────────────────────────────────────────────────────────
-FENCE_RE = re.compile(r"```(?:diff|patch)?\s+(.*?)```", re.S)
-
-# ─── replace the whole function in validation.py ─────────────────────────
-def apply_diff_to_script(diff: str, script_path: pathlib.Path) -> pathlib.Path:
-    """
-    Try to apply *diff* to *script_path*.
-
-    • Supports fenced ```diff blocks.
-    • If the diff has leading commentary, it is stripped.
-    • If no hunks remain, the LLM is asked once to regenerate the full script.
-    • Returns the path of the NEW converter (still script_path for in‑place).
-    """
-    if not diff.strip():
-        return script_path                        # nothing to do
-
-    # 1️⃣ unwrap ``` fenced block, if present
-    fence = re.search(r"```(?:diff|patch)?\s+(.*?)```", diff, re.S)
-    if fence:
-        diff = fence.group(1).strip()
-
-    # 2️⃣ drop chatter before the first diff marker
-    for marker in ("\n--- ", "\ndiff ", "\n@@"):
-        idx = diff.find(marker)
-        if idx != -1:
-            diff = diff[idx + 1:]                 # skip leading \n
-            break
-
-    # helper to write a NEW version and atomically replace active script
-    def _write_new(code: str) -> pathlib.Path:
-        i = 0
-        while (SCRIPT_VERSIONS_DIR / f"{script_path.stem}_v{i}.py").exists():
-            i += 1
-        new_path = SCRIPT_VERSIONS_DIR / f"{script_path.stem}_v{i}.py"
-        new_path.write_text(code, "utf-8")
-        script_path.write_text(code, "utf-8")
-        return new_path
-
-    # 3️⃣ try to apply as unified diff
-    try:
-        patch = PatchSet(diff)
-    except Exception:
-        patch = PatchSet()
-
-    if any(len(h) for p in patch for h in p):     # we have hunks
-        lines = script_path.read_text("utf-8").splitlines(keepends=True)
-        for p in patch:
-            for h in p:
-                start = h.source_start - 1
-                end   = start + h.source_length
-                lines[start:end] = [l.value for l in h.target_lines()]
-        return _write_new("".join(lines))
-
-    # 4️⃣ fallback – ask model to regenerate full file
-    regen_prompt = (
-        "Rewrite the entire converter so that these changes are incorporated. "
-        "Return ONLY valid Python code, no commentary:\n\n"
-        + diff[:1500]  # pass trimmed diff for context
-    )
-    try:
-        regen_code = (
-            OpenAI()
-            .chat.completions.create(
-                model=MODEL,
-                temperature=1,
-                messages=[{"role": "user", "content": regen_prompt}],
-            )
-            .choices[0]
-            .message.content
-        )
-    except Exception:
-        # give up – store unusable diff and leave script unchanged
-        (SCRIPT_VERSIONS_DIR / (script_path.stem + ".patch")).write_text(diff, "utf-8")
-        return script_path
-
-    # simple sanity: must contain a def or import
-    if "def " in regen_code or "import " in regen_code:
-        return _write_new(dedent(regen_code).strip("\n") + "\n")
-
-    # still unusable → store patch, keep old converter
-    (SCRIPT_VERSIONS_DIR / (script_path.stem + ".patch")).write_text(diff, "utf-8")
-    return script_path
