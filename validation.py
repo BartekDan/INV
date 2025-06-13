@@ -206,16 +206,15 @@ def analyze_epp(epp_text: str, script_code: str) -> Dict[str, Any]:
     """
     client = OpenAI()
     prompt = (
-        "Check this EPP; if invalid return JSON with keys 'report', "
-        "'reasoning', 'new_script'. The 'errors' list must enumerate *every* "
-        "missing or invalid field. 'new_script' must be a complete Python "
-        "converter that, when used, prevents these errors.\n"
-        "---BEGIN:EPP---\n"
-        + epp_text
-        + "\n---END:EPP---\n"
-        "---BEGIN:SCRIPT---\n"
-        + script_code
-        + "\n---END:SCRIPT---"
+            "Check this EPP; if invalid return JSON with keys 'report', 'reasoning', "
+            "'new_script'. List every invalid field in 'errors'. "
+            "**The returned 'new_script' must be a _complete_ Python module and** "
+            "**MUST define exactly** `def agent2_json_to_epp(json_path, output_path):` "
+            "**with the same signature and behavior as in the original converter**. "
+            "'new_script' should not include any other top-level functions. "
+            "It should import only standard libraries and OpenAI helpers.\n"
+            "---BEGIN:EPP---\n" + epp_text + "\n---END:EPP---\n"
+                                             "---BEGIN:SCRIPT---\n" + script_code + "\n---END:SCRIPT---"
     )
     rsp = client.chat.completions.create(
         model=MODEL,
