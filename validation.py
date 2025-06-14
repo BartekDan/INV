@@ -31,7 +31,9 @@ SYSTEM #3 – Full EDI ++ EPP v 1.11 specification (+ empirical rules)
   • Logiczne  → accept (true,t,yes,y,1,on,tak) ⇒ 1; (false,f,no,n,0,off,nie) ⇒ 0.
   • Bajt/Int  → 0-255; if enum, coerce to nearest allowed else 0.
   • **Reserved** fields must always contain their defined value; if a field has no value, it must be encoded as an empty string literal ("").
-  • If the field is "non-empty" or "always value" use reason to propose a value using other values that fits the field and meets data type requirements. 
+  • If the field is "non-empty" or "always value" and ONLY IF IT IS empty use reason to propose a value using other values that fits the field and meets data type requirements. 
+  • Mark a field as INVALID onlty if it doesn't comply with data rules, but if it's not empty and data type is OK don't mark it as INVALID
+  
 
 ═══════════════════════════════════════════════════════════════════════
 [INFO] – 24 columns
