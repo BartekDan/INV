@@ -147,6 +147,8 @@ ADDITIONAL CONSISTENCY CHECKS
 • date_sale ≤ date_issue ≤ now.
 • if vendor_is_EU = 1 → vendor_country_prefix ≠ "PL".
 
+! NEVER CHANGE VALUES OF FIELDS THAT ALREDY HAVE THEM UNLESS THE TYPE IS WRONG. 
+
 Remember: return exactly one JSON object following SYSTEM #3; if no ERRORs,
 set "valid": true and append the token COMPLIANT as the very last line.
 List every error in json with reasononing. Don't just list general statistics. 
@@ -174,7 +176,7 @@ def call_llm(epp_text: str) -> Dict[str, Any]:
     rsp = client.chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
-        temperature=0.3,
+        temperature=0,
         messages=[
             {"role": "system", "content": "You are an EDI++ 1.11 validator; output JSON."},
             {"role": "system", "content": json.dumps(SCHEMA)},
@@ -219,7 +221,7 @@ def analyze_epp(epp_text: str, script_code: str) -> Dict[str, Any]:
     rsp = client.chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
-        temperature=1,
+        temperature=0,
         messages=[
             {"role": "system", "content": "You are an EDI++ expert; follow schema."},
             {"role": "system", "content": json.dumps(SCHEMA)},
