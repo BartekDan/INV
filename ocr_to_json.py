@@ -3,7 +3,7 @@ import base64
 from pathlib import Path
 from tqdm import tqdm
 import openai
-from openai_config import load_api_key
+from openai_config import load_api_key, record_prompt
 
 # Default directories used by the CLI
 DEFAULT_SOURCE_DIR = "invoices"
@@ -75,10 +75,12 @@ def ocr_image(image_path: str) -> str:
         },
     ]
 
+    messages = [{"role": "user", "content": blocks}]
+    record_prompt(messages, "ocr_image")
     rsp = openai.chat.completions.create(
         model="o4-mini",
         reasoning_effort="high",
-        messages=[{"role": "user", "content": blocks}],
+        messages=messages,
     )
     return rsp.choices[0].message.content
 
@@ -94,16 +96,18 @@ def save_invoice_json(img_path: str, out_path: str) -> None:
         + raw_text
     )
 
+    messages = [
+        {
+            "role": "system",
+            "content": "You output strict JSON; no extra keys, no comments.",
+        },
+        {"role": "user", "content": prompt},
+    ]
+    record_prompt(messages, "ocr_extract")
     rsp = openai.chat.completions.create(
         model="o4-mini",
         reasoning_effort="high",
-        messages=[
-            {
-                "role": "system",
-                "content": "You output strict JSON; no extra keys, no comments.",
-            },
-            {"role": "user", "content": prompt},
-        ],
+        messages=messages,
     )
 
     json_str = rsp.choices[0].message.content.strip()
