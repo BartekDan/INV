@@ -287,7 +287,7 @@ def fix_syntax(script_code: str, error_msg: str) -> str:
         model="o4-mini",
         temperature=1,
         reasoning_effort="high",
-        response_format="text",
+        response_format={"type": "text"},
         messages=messages,
     )
     out = rsp.choices[0].message.content or ""
