@@ -3,7 +3,7 @@ import base64
 from pathlib import Path
 from tqdm import tqdm
 import openai
-from openai_config import load_api_key, record_prompt
+from openai_config import load_api_key, record_prompt, record_response
 
 # Default directories used by the CLI
 DEFAULT_SOURCE_DIR = "invoices"
@@ -56,6 +56,7 @@ IMG_EXTS = (".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".gif", ".webp")
 
 def ocr_image(image_path: str) -> str:
     """Run OCR on *image_path* using an OpenAI vision model."""
+    print(f"\U0001F4F7 OCRing {image_path}")
     with open(image_path, "rb") as fh:
         img_b64 = base64.b64encode(fh.read()).decode()
 
@@ -82,11 +83,13 @@ def ocr_image(image_path: str) -> str:
         reasoning_effort="high",
         messages=messages,
     )
+    record_response(rsp.choices[0].message.content, "ocr_image")
     return rsp.choices[0].message.content
 
 
 def save_invoice_json(img_path: str, out_path: str) -> None:
     """Save extracted fields from *img_path* to *out_path* as JSON."""
+    print(f"\U0001F50E Extracting fields from {img_path}")
     raw_text = ocr_image(img_path)
 
     prompt = (
@@ -109,6 +112,7 @@ def save_invoice_json(img_path: str, out_path: str) -> None:
         reasoning_effort="high",
         messages=messages,
     )
+    record_response(rsp.choices[0].message.content, "ocr_extract")
 
     json_str = rsp.choices[0].message.content.strip()
     with open(out_path, "w", encoding="utf-8") as fh:
