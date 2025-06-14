@@ -231,7 +231,7 @@ def step2_apply_field_fixes(json_text: str, field_report: dict) -> str:
         model=MODEL,
         temperature=1,
         reasoning_effort="high",
-        response_format="text",
+        response_format={"type":"text"},
         messages=[
             {"role": "system", "content": prompt},
             {"role": "user",   "content": json.dumps(field_report, ensure_ascii=False)},
@@ -258,7 +258,7 @@ def step3_fix_syntax(script_code: str, error_msg: str) -> str:
         model=MODEL,
         temperature=1,
         reasoning_effort="high",
-        response_format="text",
+        response_format={"type":"text"},
         messages=[
             {"role": "system", "content": "You are a Python syntax fixer."},
             {"role": "user",   "content": prompt},
