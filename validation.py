@@ -177,7 +177,7 @@ def call_llm(epp_text: str) -> Dict[str, Any]:
         model=MODEL,
         response_format={"type": "json_object"},
         temperature=1,
-        reasoning={"effort": "high"},
+        reasoning_effort="high",
         messages=[
             {"role": "system", "content": "You are an EDI++ 1.11 validator; output JSON."},
             {"role": "system", "content": json.dumps(SCHEMA)},
@@ -226,7 +226,7 @@ def analyze_epp(epp_text: str, script_code: str) -> Dict[str, Any]:
         model=MODEL,
         response_format={"type": "json_object"},
         temperature=1,
-        reasoning={"effort": "high"},
+        reasoning_effort="high",
         messages=[
             {"role": "system", "content": "You are an EDI++ expert; follow schema."},
             {"role": "system", "content": json.dumps(SCHEMA)},
