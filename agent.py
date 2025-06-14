@@ -62,10 +62,29 @@ def process_file(js: Path) -> None:
 
     for attempt in range(1, MAX_ITER+1):
         try:
-            conv = import_converter(cur_cnv, f"cnv_v{v}")
+            conv = import_converter(cur_cnv, module_name)
         except Exception as exc:
-            log(f"💥 import failed: {exc!r}")
-            break
+            err = f"{type(exc).__name__}: {exc}"
+            log(f"💥 import failed: {err}")
+            # Attempt syntax fix
+            from validation import fix_syntax
+            code = cur_cnv.read_text("utf-8")
+            fixed = fix_syntax(code, err)
+            if fixed.strip():
+                # write out fixed version and retry import once
+                v += 1
+                nxt = version_path(v)
+                nxt.write_text(fixed, encoding="utf-8")
+                cur_cnv = nxt
+                log(f"🔧 syntax‐fixed converter; retrying with {cur_cnv.name}")
+                try:
+                    conv = import_converter(cur_cnv, module_name)
+                except Exception as exc2:
+                    log(f"⚠️ reimport still failed: {exc2!r}")
+                    break
+            else:
+                log("⚠️ no syntax fix returned; aborting")
+                break
 
         log(f"Attempt {attempt}/{MAX_ITER} using {cur_cnv.name}")
 

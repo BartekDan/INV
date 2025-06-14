@@ -247,3 +247,34 @@ def analyze_epp(epp_text: str, json_text: str, script_code: str) -> Dict[str, An
         "diff":       "",
         "new_script": out2.get("new_script","")
     }
+
+
+def fix_syntax(script_code: str, error_msg: str) -> str:
+    """
+    Sends only a syntax‐correction request to the LLM:
+      • Provides the exact Python source that failed with error_msg.
+      • Asks for a corrected version, no explanations.
+    Returns the corrected Python source (or empty if it failed).
+    """
+    client = OpenAI()
+    prompt = (
+        "The following Python module failed to parse:\n"
+        f"Error: {error_msg}\n\n"
+        "Here is the full source:\n"
+        "```python\n"
+        + script_code
+        + "\n```\n\n"
+        "Please return *only* the corrected Python code, "
+        "fixing the syntax errors but making no other changes."
+    )
+    rsp = client.chat.completions.create(
+        model="o4-mini",
+        temperature=1,
+        reasoning_effort="high",
+        response_format="text",
+        messages=[
+            {"role": "system", "content": "You are a Python syntax fixer."},
+            {"role": "user",   "content": prompt},
+        ],
+    )
+    return rsp.choices[0].message.content or ""
