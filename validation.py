@@ -168,7 +168,7 @@ SCHEMA: Dict[str, Any] = {
 def analyze_epp(epp_text: str, json_text: str, script_code: str) -> Dict[str, Any]:
     client = OpenAI()
 
-    # ─── STEP 1: Minimal unified-diff patch ─────────────────────────────
+    # STEP 1: Minimal unified-diff patch
     prompt_diff = (
         "You are a precision patch assistant.\n"
         "Produce *only* a unified-diff (with ```diff fences```) that fixes exactly\n"
@@ -188,8 +188,17 @@ def analyze_epp(epp_text: str, json_text: str, script_code: str) -> Dict[str, An
             {"role": "user",   "content": prompt_diff},
         ],
     )
-    out1 = json.loads(rsp1.choices[0].message.content)
+
+    raw1 = rsp1.choices[0].message.content
+    # guard against None or bad JSON
+    try:
+        out1 = json.loads(raw1) if raw1 else {}
+    except Exception:
+        out1 = {}
+
     diff = out1.get("diff", "").strip()
+    report = out1.get("report", {})
+    reasoning = out1.get("reasoning", "")
 
     # Try applying the diff
     if diff:
@@ -197,17 +206,17 @@ def analyze_epp(epp_text: str, json_text: str, script_code: str) -> Dict[str, An
             patch = PatchSet(diff)
             if any(len(h) for p in patch for h in p):
                 return {
-                    "report":     out1["report"],
-                    "reasoning":  out1["reasoning"],
+                    "report":     report,
+                    "reasoning":  reasoning,
                     "diff":       diff,
                     "new_script": ""
                 }
         except Exception:
             pass  # unparsable diff → fallback
 
-    # ─── STEP 2: Full-script fallback ───────────────────────────────────
+    # STEP 2: Full-script fallback
     prompt_full = (
-        "Minimal patch failed.  Return JSON with 'report', 'reasoning', and 'new_script'.\n"
+        "Minimal patch failed. Return JSON with 'report', 'reasoning', and 'new_script'.\n"
         "The 'new_script' must be a complete Python module defining exactly:\n"
         "  def agent2_json_to_epp(json_path, epp_path):\n"
         "It should fix all validation errors without inventing any input data.\n\n"
@@ -226,11 +235,16 @@ def analyze_epp(epp_text: str, json_text: str, script_code: str) -> Dict[str, An
             {"role": "user",   "content": prompt_full},
         ],
     )
-    out2 = json.loads(rsp2.choices[0].message.content)
+
+    raw2 = rsp2.choices[0].message.content or ""
+    try:
+        out2 = json.loads(raw2)
+    except Exception:
+        out2 = {}
 
     return {
-        "report":     out2.get("report", {}),
-        "reasoning":  out2.get("reasoning", ""),
-        "diff":       "",  # skip diff apply when full-script is used
+        "report":     out2.get("report", report),
+        "reasoning":  out2.get("reasoning", reasoning),
+        "diff":       "",
         "new_script": out2.get("new_script", "")
     }
