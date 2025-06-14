@@ -9,6 +9,7 @@ import traceback
 from typing import Dict, Any
 
 from openai import OpenAI
+from openai_config import record_prompt
 
 MODEL = "o4-mini"
 SCRIPT_VERSIONS_DIR = pathlib.Path("script_versions")
@@ -179,17 +180,19 @@ SCHEMA_ANALYZE: Dict[str, Any] = {
 # ──────────────────────────────────────────────────────────────────────────
 def validate_only(epp_text: str) -> dict:
     client = OpenAI()
+    messages = [
+        {"role": "system", "content": "You are an EDI++ 1.11 validator; output JSON."},
+        {"role": "system", "content": json.dumps(SCHEMA_VALIDATE)},
+        {"role": "system", "content": FULL_SPEC},
+        {"role": "user",   "content": f"---BEGIN:EPP---\n{epp_text}\n---END:EPP---"},
+    ]
+    record_prompt(messages, "validate_only")
     rsp = client.chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
         temperature=0.3,
         reasoning_effort="high",
-        messages=[
-            {"role": "system", "content": "You are an EDI++ 1.11 validator; output JSON."},
-            {"role": "system", "content": json.dumps(SCHEMA_VALIDATE)},
-            {"role": "system", "content": FULL_SPEC},
-            {"role": "user",   "content": f"---BEGIN:EPP---\n{epp_text}\n---END:EPP---"},
-        ],
+        messages=messages,
     )
     return json.loads(rsp.choices[0].message.content)
 
@@ -214,17 +217,19 @@ def analyze_epp(epp_text: str, json_text: str, script_code: str) -> dict:
         "  def agent2_json_to_epp(json_path, epp_path):\n"
         "with the same signature as before, fixing the above errors only."
     )
+    messages = [
+        {"role": "system", "content": "You are an EDI++ expert; follow schema."},
+        {"role": "system", "content": json.dumps(SCHEMA_ANALYZE)},
+        {"role": "system", "content": FULL_SPEC},
+        {"role": "user",   "content": prompt},
+    ]
+    record_prompt(messages, "analyze_epp")
     rsp = client.chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
         temperature=0.7,
         reasoning_effort="high",
-        messages=[
-            {"role": "system", "content": "You are an EDI++ expert; follow schema."},
-            {"role": "system", "content": json.dumps(SCHEMA_ANALYZE)},
-            {"role": "system", "content": FULL_SPEC},
-            {"role": "user",   "content": prompt},
-        ],
+        messages=messages,
     )
     out = json.loads(rsp.choices[0].message.content)
     out["report"] = report
