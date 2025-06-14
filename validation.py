@@ -1,13 +1,11 @@
 """
-validation.py – LLM validator + patch helper (full-script regeneration)
+validation.py – two-step EPP validator + converter regenerater
 """
 
 from __future__ import annotations
 import json
 import pathlib
-import re
 import traceback
-from textwrap import dedent
 from typing import Dict, Any
 
 from openai import OpenAI
@@ -17,7 +15,7 @@ SCRIPT_VERSIONS_DIR = pathlib.Path("script_versions")
 SCRIPT_VERSIONS_DIR.mkdir(exist_ok=True)
 
 # ──────────────────────────────────────────────────────────────────────────
-# FULL_SPEC – paste your entire SYSTEM #3 block here, verbatim (no edits)
+# FULL_SPEC – paste your SYSTEM #3 block here, verbatim
 # ──────────────────────────────────────────────────────────────────────────
 FULL_SPEC = r"""
 SYSTEM #3 – Full EDI ++ EPP v 1.11 specification (+ empirical rules)
@@ -155,89 +153,79 @@ List every error in json with reasononing. Don't just list general statistics.
 """
 
 # ──────────────────────────────────────────────────────────────────────────
-# SCHEMA – require full script every time
+# SCHEMA for validate_only – no code
 # ──────────────────────────────────────────────────────────────────────────
-SCHEMA: Dict[str, Any] = {
+SCHEMA_VALIDATE: Dict[str, Any] = {
     "type": "object",
     "properties": {
         "valid":  {"type": "boolean"},
-        "errors": {"type": "array",   "items": {"type": "object"}},
-        "report":    {"type": "object"},
-        "reasoning": {"type": "string"},
-        "new_script": {"type": "string", "minLength": 1},
+        "errors": {"type": "array", "items": {"type": "object"}},
     },
-    "required": ["valid", "errors", "report", "reasoning", "new_script"],
+    "required": ["valid", "errors"],
 }
 
 # ──────────────────────────────────────────────────────────────────────────
-def call_llm(epp_text: str) -> Dict[str, Any]:
-    """Simple validation – no diff returned here."""
-    client = OpenAI()
-    messages = [
-        {"role": "system", "content": "You are an EDI++ 1.11 validator; output JSON."},
-        {"role": "system", "content": json.dumps(SCHEMA)},
-        {"role": "system", "content": FULL_SPEC},
-        {"role": "user", "content": f"---BEGIN:EPP---\n{epp_text}\n---END:EPP---"},
-    ]
-    # Print the entire prompt for debugging purposes
-    print("call_llm messages:", json.dumps(messages, indent=2))
-    rsp = client.chat.completions.create(
-        model=MODEL,
-        response_format={"type": "json_object"},
-        temperature=1,
-        reasoning_effort="high",
-        messages=messages,
-    )
-    return json.loads(rsp.choices[0].message.content)
-
-def validate_epp(path: str) -> Dict[str, Any]:
-    """File-based entry point for pure validation (no script regeneration)."""
-    try:
-        txt = pathlib.Path(path).read_text("windows-1250")
-        return call_llm(txt)
-    except Exception:
-        return {
-            "valid": False,
-            "errors": [{"message": "validator crash", "trace": traceback.format_exc()}],
-        }
+# SCHEMA for analyze_epp – expects full code
+# ──────────────────────────────────────────────────────────────────────────
+SCHEMA_ANALYZE: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "reasoning":  {"type": "string"},
+        "new_script": {"type": "string", "minLength": 1},
+    },
+    "required": ["reasoning", "new_script"],
+}
 
 # ──────────────────────────────────────────────────────────────────────────
-def analyze_epp(epp_text: str, script_code: str) -> Dict[str, Any]:
-    """
-    One-shot validation + full-script proposal.
-    Returns JSON with keys:
-      • report     – validation result
-      • reasoning  – human explanation
-      • new_script – full updated json_to_epp.py code
-    """
+def validate_only(epp_text: str) -> dict:
     client = OpenAI()
-    prompt = (
-        "Check this EPP if it meets schema defined in System#3; if invalid return JSON with keys 'report', 'reasoning', "
-        "'new_script'. List every invalid field in 'errors'. "
-        "**The returned 'new_script' must be a _complete_ Python module and** "
-        "**MUST define exactly** `def agent2_json_to_epp(json_path, output_path):` "
-        "**with the same signature and behavior as in the original converter**. "
-        "'new_script' should not include any other top-level functions. "
-        "It should import only standard libraries and OpenAI helpers.\n"
-        "List every invalid field in 'errors'. Do NOT just list general statistics. "
-        "**You must never alter or invent any data from the input JSON** — invoice names, amounts, dates, everything must be preserved exactly. "
-        "'new_script' must be a complete Python converter that, when used, fixes only formatting or structural bugs and reproduces the original data values unchanged.\n"
-        "---BEGIN:EPP---\n" + epp_text + "\n---END:EPP---\n"
-        "---BEGIN:SCRIPT---\n" + script_code + "\n---END:SCRIPT---"
-    )
-    messages = [
-        {"role": "system", "content": "You are an EDI++ expert; follow schema."},
-        {"role": "system", "content": json.dumps(SCHEMA)},
-        {"role": "system", "content": FULL_SPEC},
-        {"role": "user", "content": prompt},
-    ]
-    # Print the entire prompt for debugging purposes
-    print("analyze_epp messages:", json.dumps(messages, indent=2))
     rsp = client.chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
-        temperature=1,
+        temperature=0.3,
         reasoning_effort="high",
-        messages=messages,
+        messages=[
+            {"role": "system", "content": "You are an EDI++ 1.11 validator; output JSON."},
+            {"role": "system", "content": json.dumps(SCHEMA_VALIDATE)},
+            {"role": "system", "content": FULL_SPEC},
+            {"role": "user",   "content": f"---BEGIN:EPP---\n{epp_text}\n---END:EPP---"},
+        ],
     )
     return json.loads(rsp.choices[0].message.content)
+
+# ──────────────────────────────────────────────────────────────────────────
+def analyze_epp(epp_text: str, json_text: str, script_code: str) -> dict:
+    # Step A: get full error report
+    report = validate_only(epp_text)
+    if report.get("valid"):
+        return {"reasoning": "No errors – converter is valid.", "new_script": ""}
+
+    # Step B: ask for complete, revised converter
+    client = OpenAI()
+    prompt = (
+        "Here is the original JSON and the validation report. "
+        "Return JSON with keys 'reasoning' and 'new_script'.\n\n"
+        "---BEGIN:JSON---\n"   + json_text   + "\n---END:JSON---\n"
+        "---BEGIN:REPORT---\n" + json.dumps(report, ensure_ascii=False, indent=2)
+        + "\n---END:REPORT---\n"
+        "---BEGIN:SCRIPT---\n" + script_code + "\n---END:SCRIPT---\n\n"
+        "Do NOT change or invent any input data fields. "
+        "Your 'new_script' must define exactly:\n"
+        "  def agent2_json_to_epp(json_path, epp_path):\n"
+        "with the same signature as before, fixing the above errors only."
+    )
+    rsp = client.chat.completions.create(
+        model=MODEL,
+        response_format={"type": "json_object"},
+        temperature=0.7,
+        reasoning_effort="high",
+        messages=[
+            {"role": "system", "content": "You are an EDI++ expert; follow schema."},
+            {"role": "system", "content": json.dumps(SCHEMA_ANALYZE)},
+            {"role": "system", "content": FULL_SPEC},
+            {"role": "user",   "content": prompt},
+        ],
+    )
+    out = json.loads(rsp.choices[0].message.content)
+    out["report"] = report
+    return out
