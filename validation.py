@@ -1,4 +1,4 @@
-# validation.py – two-stage minimal-patch then full-rewrite for EPP conversion
+# validation.py – three-stage EPP self-healing helpers
 
 from __future__ import annotations
 import json
@@ -7,16 +7,15 @@ import traceback
 from typing import Dict, Any
 
 from openai import OpenAI
-from openai_config import record_prompt, record_response
-from unidiff.patch import PatchSet
 
 MODEL = "o4-mini"
 SCRIPT_VERSIONS_DIR = pathlib.Path("script_versions")
 SCRIPT_VERSIONS_DIR.mkdir(exist_ok=True)
 
-# ──────────────────────────────────────────────────────────────────────────
-# FULL_SPEC – paste your entire SYSTEM #3 EDI++ v1.11 spec here, verbatim:
-# ──────────────────────────────────────────────────────────────────────────
+
+# ────────────────────────────────────────────────────────────
+# FULL_SPEC – paste your entire SYSTEM #3 block here, verbatim
+# ────────────────────────────────────────────────────────────
 FULL_SPEC = r"""
 SYSTEM #3 – Full EDI ++ EPP v 1.11 specification (+ empirical rules)
 ────────────────────────────────────────────────────────────────────────
@@ -152,144 +151,117 @@ set "valid": true and append the token COMPLIANT as the very last line.
 List every error in json with reasononing. Don't just list general statistics. 
 """
 
-# ──────────────────────────────────────────────────────────────────────────
-# Unified schema for both diff and full-script output
-# ──────────────────────────────────────────────────────────────────────────
-SCHEMA: Dict[str, Any] = {
+
+# ────────────────────────────────────────────────────────────
+# SCHEMA for Step 1: data-level field report
+# ────────────────────────────────────────────────────────────
+SCHEMA_STEP1: Dict[str, Any] = {
     "type": "object",
     "properties": {
-        "report":     {"type": "object"},
-        "reasoning":  {"type": "string"},
-        "diff":       {"type": "string"},      # may be empty
-        "new_script": {"type": "string"},      # may be empty
+        "fields": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "segment":    {"type": "string"},
+                    "idx":        {"type": "integer"},
+                    "status":     {"type": "string", "enum": ["OK","MISSING","INVALID"]},
+                    "suggestion":{"type": "string"}
+                },
+                "required": ["segment","idx","status","suggestion"]
+            }
+        }
     },
-    "required": ["report", "reasoning", "diff", "new_script"],
+    "required": ["fields"]
 }
 
-def analyze_epp(epp_text: str, json_text: str, script_code: str) -> Dict[str, Any]:
-    print("\U0001F50D Validating EPP against model")
-    client = OpenAI()
 
-    # STEP 1: minimal diff request
-    prompt_diff = (
-        "You are a precision patch assistant.\n"
-        "Produce *only* a unified diff (wrapped in ```diff fences```) that fixes exactly\n"
-        "the issues in the function `agent2_json_to_epp`—touch as few lines as possible.\n"
-        "Do NOT include any prose outside the fences.\n\n"
-        "---BEGIN:EPP---\n"    + epp_text   + "\n---END:EPP---\n"
-        "---BEGIN:SCRIPT---\n" + script_code + "\n---END:SCRIPT---"
-    )
-    print("\u27a1\ufe0f Step 1: minimal diff")
-    messages1 = [
-        {"role": "system",  "content": "You are an expert at minimal code patching."},
-        {"role": "system",  "content": json.dumps(SCHEMA)},
-        {"role": "system",  "content": FULL_SPEC},
-        {"role": "user",    "content": prompt_diff},
-    ]
-    record_prompt(messages1, "validate_diff")
-    rsp1 = client.chat.completions.create(
-        model=MODEL,
-        temperature=1,
-        response_format={"type": "json_object"},
-        messages=messages1,
-    )
-    raw1 = rsp1.choices[0].message.content or ""
-    record_response(raw1, "validate_diff")
-
-    # safely parse or default
-    try:
-        out1 = json.loads(raw1) if raw1 else {}
-    except Exception:
-        out1 = {}
-
-    diff      = out1.get("diff",    "").strip()
-    report    = out1.get("report",  {})
-    reasoning = out1.get("reasoning","")
-
-    # if we got a valid hunk, return it immediately
-    if diff:
-        try:
-            patch = PatchSet(diff)
-            if any(len(h) for p in patch for h in p):
-                return {
-                    "report":     report,
-                    "reasoning":  reasoning,
-                    "diff":       diff,
-                    "new_script": ""
-                }
-        except Exception:
-            pass
-
-    # STEP 2: full-script fallback
-    print("\u27a1\ufe0f Step 2: full rewrite")
-    prompt_full = (
-        "Minimal patch failed. Return JSON with 'report', 'reasoning', and 'new_script'.\n"
-        "The 'new_script' must be a complete Python module defining exactly:\n"
-        "  def agent2_json_to_epp(json_path, epp_path):\n"
-        "It should fix all validation errors without inventing any input data.\n\n"
-        "---BEGIN:EPP---\n"   + epp_text   + "\n---END:EPP---\n"
-        "---BEGIN:JSON---\n"  + json_text  + "\n---END:JSON---\n"
-        "---BEGIN:SCRIPT---\n" + script_code + "\n---END:SCRIPT---"
-    )
-    messages2 = [
-        {"role": "system", "content": "You are an EDI++ expert; follow schema."},
-        {"role": "system", "content": json.dumps(SCHEMA)},
-        {"role": "system", "content": FULL_SPEC},
-        {"role": "user",   "content": prompt_full},
-    ]
-    record_prompt(messages2, "validate_full")
-    rsp2 = client.chat.completions.create(
-        model=MODEL,
-        temperature=1,
-        response_format={"type": "json_object"},
-        messages=messages2,
-    )
-    raw2 = rsp2.choices[0].message.content or ""
-    record_response(raw2, "validate_full")
-    try:
-        out2 = json.loads(raw2)
-    except Exception:
-        out2 = {}
-
-    return {
-        "report":     out2.get("report",    report),
-        "reasoning":  out2.get("reasoning", reasoning),
-        "diff":       "",
-        "new_script": out2.get("new_script","")
-    }
-
-
-def fix_syntax(script_code: str, error_msg: str) -> str:
+def step1_data_analysis(epp_text: str, json_text: str) -> dict:
     """
-    Sends only a syntax‐correction request to the LLM:
-      • Provides the exact Python source that failed with error_msg.
-      • Asks for a corrected version, no explanations.
-    Returns the corrected Python source (or empty if it failed).
+    Compare EPP vs JSON under FULL_SPEC rules.
+    Return: { fields: [ {segment, idx, status, suggestion}, … ] }
     """
-    print("\u2699\ufe0f Attempting syntax fix")
     client = OpenAI()
-    prompt = (
-        "The following Python module failed to parse:\n"
-        f"Error: {error_msg}\n\n"
-        "Here is the full source:\n"
-        "```python\n"
-        + script_code
-        + "\n```\n\n"
-        "Please return *only* the corrected Python code, "
-        "fixing the syntax errors but making no other changes."
-    )
     messages = [
-        {"role": "system", "content": "You are a Python syntax fixer."},
-        {"role": "user",   "content": prompt},
+        {
+            "role": "system",
+            "content": (
+                "You are an expert EDI++ data validator. Inspect the EPP output "
+                "against the FULL_SPEC and the original JSON. For each field in "
+                "[INFO], [NAGLOWEK], [ZAWARTOSC], output an object with:\n"
+                "  • segment (\"INFO\"/\"NAGLOWEK\"/\"ZAWARTOSC\")\n"
+                "  • idx (column number)\n"
+                "  • status: \"OK\" / \"MISSING\" / \"INVALID\"\n"
+                "  • suggestion: what to fill (per spec) or empty if unknown.\n"
+                "Do NOT suggest code changes—only field guidance."
+            )
+        },
+        {"role": "system", "content": json.dumps(SCHEMA_STEP1)},
+        {"role": "system", "content": FULL_SPEC},
+        {
+            "role": "user",
+            "content": (
+                "---BEGIN:JSON---\n" + json_text + "\n---END:JSON---\n\n"
+                "---BEGIN:EPP---\n"  + epp_text  + "\n---END:EPP---"
+            )
+        },
     ]
-    record_prompt(messages, "fix_syntax")
     rsp = client.chat.completions.create(
-        model="o4-mini",
+        model=MODEL,
         temperature=1,
         reasoning_effort="high",
-        response_format={"type": "text"},
+        response_format={"type": "json_object"},
         messages=messages,
     )
-    out = rsp.choices[0].message.content or ""
-    record_response(out, "fix_syntax")
-    return out
+    return json.loads(rsp.choices[0].message.content)
+
+
+# ────────────────────────────────────────────────────────────
+def step2_apply_field_fixes(json_text: str, field_report: dict) -> str:
+    """
+    Given the JSON and the step1 report, insert suggestion values in place.
+    Return the corrected JSON text (string).
+    """
+    client = OpenAI()
+    prompt = (
+        "You are a data‐fixing assistant. Apply the suggestions from the field report "
+        "into the JSON. Do NOT rename keys or invent new data. Return ONLY the full JSON."
+    )
+    rsp = client.chat.completions.create(
+        model=MODEL,
+        temperature=1,
+        reasoning_effort="high",
+        response_format="text",
+        messages=[
+            {"role": "system", "content": prompt},
+            {"role": "user",   "content": json.dumps(field_report, ensure_ascii=False)},
+            {"role": "user",   "content": json_text},
+        ],
+    )
+    return rsp.choices[0].message.content
+
+
+# ────────────────────────────────────────────────────────────
+def step3_fix_syntax(script_code: str, error_msg: str) -> str:
+    """
+    When the converter import fails, fix only syntax errors.
+    Return the corrected full Python code (or empty if unchanged).
+    """
+    client = OpenAI()
+    prompt = (
+        f"The following Python module failed to parse:\nError: {error_msg}\n\n"
+        "Here is the full source:\n```python\n" + script_code + "\n```\n\n"
+        "Please return ONLY the corrected Python code, fixing syntax errors "
+        "but making no other changes."
+    )
+    rsp = client.chat.completions.create(
+        model=MODEL,
+        temperature=1,
+        reasoning_effort="high",
+        response_format="text",
+        messages=[
+            {"role": "system", "content": "You are a Python syntax fixer."},
+            {"role": "user",   "content": prompt},
+        ],
+    )
+    return rsp.choices[0].message.content or ""
