@@ -10,7 +10,9 @@ except ImportError:  # pragma: no cover - handled via requirements
 
 
 PROMPT_DIR = Path(__file__).resolve().parent / "logs" / "prompts"
+RESPONSE_DIR = Path(__file__).resolve().parent / "logs" / "responses"
 PROMPT_DIR.mkdir(parents=True, exist_ok=True)
+RESPONSE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_api_key() -> None:
@@ -34,3 +36,13 @@ def record_prompt(messages: list[dict], prefix: str = "prompt") -> None:
     print("PROMPT:")
     print(json.dumps(messages, ensure_ascii=False, indent=2))
     print(f"Saved prompt to {path}")
+
+
+def record_response(content: str | None, prefix: str = "response") -> None:
+    """Print *content* and save it under ``logs/responses``."""
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = RESPONSE_DIR / f"{prefix}_{ts}.txt"
+    path.write_text(content or "", encoding="utf-8")
+    print("RESPONSE:")
+    print(content)
+    print(f"Saved response to {path}")

@@ -7,6 +7,7 @@ import traceback
 from typing import Dict, Any
 
 from openai import OpenAI
+from openai_config import record_prompt, record_response
 from unidiff.patch import PatchSet
 
 MODEL = "o4-mini"
@@ -166,6 +167,7 @@ SCHEMA: Dict[str, Any] = {
 }
 
 def analyze_epp(epp_text: str, json_text: str, script_code: str) -> Dict[str, Any]:
+    print("\U0001F50D Validating EPP against model")
     client = OpenAI()
 
     # STEP 1: minimal diff request
@@ -177,18 +179,22 @@ def analyze_epp(epp_text: str, json_text: str, script_code: str) -> Dict[str, An
         "---BEGIN:EPP---\n"    + epp_text   + "\n---END:EPP---\n"
         "---BEGIN:SCRIPT---\n" + script_code + "\n---END:SCRIPT---"
     )
+    print("\u27a1\ufe0f Step 1: minimal diff")
+    messages1 = [
+        {"role": "system",  "content": "You are an expert at minimal code patching."},
+        {"role": "system",  "content": json.dumps(SCHEMA)},
+        {"role": "system",  "content": FULL_SPEC},
+        {"role": "user",    "content": prompt_diff},
+    ]
+    record_prompt(messages1, "validate_diff")
     rsp1 = client.chat.completions.create(
         model=MODEL,
         temperature=1,
         response_format={"type": "json_object"},
-        messages=[
-            {"role": "system",  "content": "You are an expert at minimal code patching."},
-            {"role": "system",  "content": json.dumps(SCHEMA)},
-            {"role": "system",  "content": FULL_SPEC},
-            {"role": "user",    "content": prompt_diff},
-        ],
+        messages=messages1,
     )
-    raw1 = rsp1.choices[0].message.content
+    raw1 = rsp1.choices[0].message.content or ""
+    record_response(raw1, "validate_diff")
 
     # safely parse or default
     try:
@@ -215,6 +221,7 @@ def analyze_epp(epp_text: str, json_text: str, script_code: str) -> Dict[str, An
             pass
 
     # STEP 2: full-script fallback
+    print("\u27a1\ufe0f Step 2: full rewrite")
     prompt_full = (
         "Minimal patch failed. Return JSON with 'report', 'reasoning', and 'new_script'.\n"
         "The 'new_script' must be a complete Python module defining exactly:\n"
@@ -224,18 +231,21 @@ def analyze_epp(epp_text: str, json_text: str, script_code: str) -> Dict[str, An
         "---BEGIN:JSON---\n"  + json_text  + "\n---END:JSON---\n"
         "---BEGIN:SCRIPT---\n" + script_code + "\n---END:SCRIPT---"
     )
+    messages2 = [
+        {"role": "system", "content": "You are an EDI++ expert; follow schema."},
+        {"role": "system", "content": json.dumps(SCHEMA)},
+        {"role": "system", "content": FULL_SPEC},
+        {"role": "user",   "content": prompt_full},
+    ]
+    record_prompt(messages2, "validate_full")
     rsp2 = client.chat.completions.create(
         model=MODEL,
         temperature=1,
         response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": "You are an EDI++ expert; follow schema."},
-            {"role": "system", "content": json.dumps(SCHEMA)},
-            {"role": "system", "content": FULL_SPEC},
-            {"role": "user",   "content": prompt_full},
-        ],
+        messages=messages2,
     )
     raw2 = rsp2.choices[0].message.content or ""
+    record_response(raw2, "validate_full")
     try:
         out2 = json.loads(raw2)
     except Exception:
@@ -256,6 +266,7 @@ def fix_syntax(script_code: str, error_msg: str) -> str:
       • Asks for a corrected version, no explanations.
     Returns the corrected Python source (or empty if it failed).
     """
+    print("\u2699\ufe0f Attempting syntax fix")
     client = OpenAI()
     prompt = (
         "The following Python module failed to parse:\n"
@@ -267,14 +278,18 @@ def fix_syntax(script_code: str, error_msg: str) -> str:
         "Please return *only* the corrected Python code, "
         "fixing the syntax errors but making no other changes."
     )
+    messages = [
+        {"role": "system", "content": "You are a Python syntax fixer."},
+        {"role": "user",   "content": prompt},
+    ]
+    record_prompt(messages, "fix_syntax")
     rsp = client.chat.completions.create(
         model="o4-mini",
         temperature=1,
         reasoning_effort="high",
         response_format="text",
-        messages=[
-            {"role": "system", "content": "You are a Python syntax fixer."},
-            {"role": "user",   "content": prompt},
-        ],
+        messages=messages,
     )
-    return rsp.choices[0].message.content or ""
+    out = rsp.choices[0].message.content or ""
+    record_response(out, "fix_syntax")
+    return out
