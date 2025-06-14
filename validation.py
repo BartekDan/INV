@@ -1,11 +1,10 @@
-# validation.py – three-stage EPP self-healing helpers
+# validation.py – four-stage EPP self-healing workflow
 
 from __future__ import annotations
 import json
 import pathlib
 import traceback
 from typing import Dict, Any
-
 from openai import OpenAI
 
 MODEL = "o4-mini"
@@ -151,9 +150,20 @@ set "valid": true and append the token COMPLIANT as the very last line.
 List every error in json with reasononing. Don't just list general statistics. 
 """
 
+# ────────────────────────────────────────────────────────────
+# SCHEMA for validate_only (Stage 0)
+# ────────────────────────────────────────────────────────────
+SCHEMA_VALIDATE: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "valid":  {"type": "boolean"},
+        "errors": {"type": "array", "items": {"type": "object"}},
+    },
+    "required": ["valid", "errors"],
+}
 
 # ────────────────────────────────────────────────────────────
-# SCHEMA for Step 1: data-level field report
+# SCHEMA for step1_data_analysis (Stage 1)
 # ────────────────────────────────────────────────────────────
 SCHEMA_STEP1: Dict[str, Any] = {
     "type": "object",
@@ -163,23 +173,53 @@ SCHEMA_STEP1: Dict[str, Any] = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "segment":    {"type": "string"},
-                    "idx":        {"type": "integer"},
-                    "status":     {"type": "string", "enum": ["OK","MISSING","INVALID"]},
-                    "suggestion":{"type": "string"}
+                    "segment":     {"type": "string"},
+                    "idx":         {"type": "integer"},
+                    "field":       {"type": "string"},
+                    "status":      {"type": "string", "enum": ["OK","MISSING","INVALID"]},
+                    "suggestion":  {"type": "string"},
+                    "code_ref": {
+                        "type": "object",
+                        "properties": {
+                            "var":       {"type": "string"},
+                            "index":     {"type": "integer"},
+                            "line_hint": {"type": "string"}
+                        },
+                        "required": ["var","index","line_hint"]
+                    },
                 },
-                "required": ["segment","idx","status","suggestion"]
+                "required": ["segment","idx","field","status","suggestion","code_ref"]
             }
         }
     },
-    "required": ["fields"]
+    "required": ["fields"],
 }
+
+
+def validate_only(epp_text: str) -> dict:
+    """
+    Stage 0: Pure validation of EPP against the spec.
+    Returns {"valid":bool, "errors":[…]}.
+    """
+    client = OpenAI()
+    rsp = client.chat.completions.create(
+        model=MODEL,
+        temperature=1,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": "You are an EDI++ 1.11 validator; output JSON."},
+            {"role": "system", "content": json.dumps(SCHEMA_VALIDATE)},
+            {"role": "system", "content": FULL_SPEC},
+            {"role": "user",   "content": f"---BEGIN:EPP---\n{epp_text}\n---END:EPP---"},
+        ],
+    )
+    return json.loads(rsp.choices[0].message.content)
 
 
 def step1_data_analysis(epp_text: str, json_text: str) -> dict:
     """
-    Compare EPP vs JSON under FULL_SPEC rules.
-    Return: { fields: [ {segment, idx, status, suggestion}, … ] }
+    Stage 1: Field-level analysis.
+    Returns {"fields":[{segment,idx,field,status,suggestion,code_ref},…]}
     """
     client = OpenAI()
     messages = [
@@ -189,11 +229,13 @@ def step1_data_analysis(epp_text: str, json_text: str) -> dict:
                 "You are an expert EDI++ data validator. Inspect the EPP output "
                 "against the FULL_SPEC and the original JSON. For each field in "
                 "[INFO], [NAGLOWEK], [ZAWARTOSC], output an object with:\n"
-                "  • segment (\"INFO\"/\"NAGLOWEK\"/\"ZAWARTOSC\")\n"
-                "  • idx (column number)\n"
-                "  • status: \"OK\" / \"MISSING\" / \"INVALID\"\n"
-                "  • suggestion: what to fill (per spec) or empty if unknown.\n"
-                "Do NOT suggest code changes—only field guidance."
+                "- segment (\"INFO\",\"NAGLOWEK\",\"ZAWARTOSC\")\n"
+                "- idx (column number)\n"
+                "- field (JSON key name)\n"
+                "- status: \"OK\"/\"MISSING\"/\"INVALID\"\n"
+                "- suggestion: what to fill (per spec) or \"\" if unknown\n"
+                "- code_ref: {var:\"info\" or \"hdr\", index:<integer>, line_hint:<one-line code snippet>}\n"
+                "Do NOT propose code – only structured JSON guidance."
             )
         },
         {"role": "system", "content": json.dumps(SCHEMA_STEP1)},
@@ -209,56 +251,59 @@ def step1_data_analysis(epp_text: str, json_text: str) -> dict:
     rsp = client.chat.completions.create(
         model=MODEL,
         temperature=1,
-        reasoning_effort="high",
         response_format={"type": "json_object"},
         messages=messages,
     )
     return json.loads(rsp.choices[0].message.content)
 
 
-# ────────────────────────────────────────────────────────────
-def step2_apply_field_fixes(json_text: str, field_report: dict) -> str:
+def step2_patch_script(script_code: str, field_report: dict) -> str:
     """
-    Given the JSON and the step1 report, insert suggestion values in place.
-    Return the corrected JSON text (string).
+    Stage 2: Surgical rewrite of converter code.
+    Inject suggested values directly at code_ref locations.
+    Returns the full corrected Python source.
     """
     client = OpenAI()
     prompt = (
-        "You are a data‐fixing assistant. Apply the suggestions from the field report "
-        "into the JSON. Do NOT rename keys or invent new data. Return ONLY the full JSON."
+        "You are a Python patch assistant. Given the field report below, "
+        "modify the function agent2_json_to_epp() so that for each entry you "
+        "locate the exact line matching code_ref.line_hint and replace the assignment "
+        "with the suggestion. Preserve all other code and formatting, touching only "
+        "those lines. Return ONLY the complete corrected Python source."
+        "\n\nField report:\n"
+        f"{json.dumps(field_report, ensure_ascii=False, indent=2)}\n\n"
+        "Current converter code:\n```python\n"
+        + script_code
+        + "\n```"
     )
     rsp = client.chat.completions.create(
         model=MODEL,
         temperature=1,
-        reasoning_effort="high",
-        response_format={"type":"text"},
+        response_format={"type": "text"},
         messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user",   "content": json.dumps(field_report, ensure_ascii=False)},
-            {"role": "user",   "content": json_text},
+            {"role": "system", "content": "You are a Python syntax-aware patch assistant."},
+            {"role": "user",   "content": prompt},
         ],
     )
-    return rsp.choices[0].message.content
+    return rsp.choices[0].message.content or script_code
 
 
-# ────────────────────────────────────────────────────────────
 def step3_fix_syntax(script_code: str, error_msg: str) -> str:
     """
-    When the converter import fails, fix only syntax errors.
-    Return the corrected full Python code (or empty if unchanged).
+    Stage 3: If the patched script fails to import, fix only syntax errors.
+    Returns corrected full source or empty on failure.
     """
     client = OpenAI()
     prompt = (
-        f"The following Python module failed to parse:\nError: {error_msg}\n\n"
-        "Here is the full source:\n```python\n" + script_code + "\n```\n\n"
+        f"The following Python module failed to parse with: {error_msg}\n"
+        "Here is the source:\n```python\n" + script_code + "\n```\n\n"
         "Please return ONLY the corrected Python code, fixing syntax errors "
         "but making no other changes."
     )
     rsp = client.chat.completions.create(
         model=MODEL,
         temperature=1,
-        reasoning_effort="high",
-        response_format={"type":"text"},
+        response_format={"type": "text"},
         messages=[
             {"role": "system", "content": "You are a Python syntax fixer."},
             {"role": "user",   "content": prompt},

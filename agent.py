@@ -9,9 +9,10 @@ from typing import Dict, Any
 from openai_config import load_api_key
 from validation import (
     step1_data_analysis,
-    step2_apply_field_fixes,
+    step2_patch_script,
     step3_fix_syntax,
 )
+
 
 # ────────────────────────────────────────────────────────────
 # Paths & constants
@@ -112,13 +113,19 @@ def process_file(js: Path) -> None:
             log(f"✅ valid on data check, no code changes needed")
             return
 
-        # ─── STEP 2: Apply Data Fixes to JSON ─────────────────────
-        json_text = step2_apply_field_fixes(json_text, field_report)
-        save(ROOT / "logs" / f"{base}_step2_{attempt}.json", json_text)
-        js.write_text(json_text, encoding="utf-8")
-        log(f"🔄 JSON updated; will retry conversion in next iteration")
+       
+        # ─── STEP 2: Patch converter code (no JSON changes) ──────
+        orig_code = cur_cnv.read_text("utf-8")
+        patched_code = step2_patch_script(orig_code, field_report)
+        if patched_code.strip() == orig_code.strip():
+            log("⚠️ no code patch produced; aborting")
+            break
 
-        # loop back for next iteration (STEP 1 will run again)
+        # write the new version of the converter and retry
+        v += 1
+        cur_cnv = version_path(v)
+        cur_cnv.write_text(patched_code, encoding="utf-8")
+        log(f"🔧 converter patched to {cur_cnv.name}; retrying")
         continue
 
     # ─── Exhausted or aborted → archive failed EPP ─────────────
