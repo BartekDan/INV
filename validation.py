@@ -190,7 +190,7 @@ def validate_only(epp_text: str) -> dict:
     rsp = client.chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
-        temperature=0.3,
+        temperature=1,
         reasoning_effort="high",
         messages=messages,
     )
@@ -227,7 +227,7 @@ def analyze_epp(epp_text: str, json_text: str, script_code: str) -> dict:
     rsp = client.chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
-        temperature=0.7,
+        temperature=1,
         reasoning_effort="high",
         messages=messages,
     )
