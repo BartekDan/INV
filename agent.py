@@ -61,8 +61,9 @@ def process_file(js: Path) -> None:
         shutil.copy2(ORIGINAL_CNV, cur_cnv)
 
     for attempt in range(1, MAX_ITER+1):
+        mod_name = f"json_to_epp_v{v}"
         try:
-            conv = import_converter(cur_cnv, module_name)
+            conv = import_converter(cur_cnv, mod_name)
         except Exception as exc:
             err = f"{type(exc).__name__}: {exc}"
             log(f"💥 import failed: {err}")
@@ -76,9 +77,10 @@ def process_file(js: Path) -> None:
                 nxt = version_path(v)
                 nxt.write_text(fixed, encoding="utf-8")
                 cur_cnv = nxt
+                mod_name = f"json_to_epp_v{v}"
                 log(f"🔧 syntax‐fixed converter; retrying with {cur_cnv.name}")
                 try:
-                    conv = import_converter(cur_cnv, module_name)
+                    conv = import_converter(cur_cnv, mod_name)
                 except Exception as exc2:
                     log(f"⚠️ reimport still failed: {exc2!r}")
                     break
