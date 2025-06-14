@@ -215,6 +215,9 @@ def analyze_epp(epp_text: str, script_code: str) -> Dict[str, Any]:
             "**with the same signature and behavior as in the original converter**. "
             "'new_script' should not include any other top-level functions. "
             "It should import only standard libraries and OpenAI helpers.\n"
+              "List every invalid field in 'errors'. Do NOT just list general statistics. "
++        "**You must never alter or invent any data from the input JSON** — invoice names, amounts, dates, everything must be preserved exactly. "
++        "'new_script' must be a complete Python converter that, when used, fixes only formatting or structural bugs and reproduces the original data values unchanged.\n"
             "---BEGIN:EPP---\n" + epp_text + "\n---END:EPP---\n"
                                              "---BEGIN:SCRIPT---\n" + script_code + "\n---END:SCRIPT---"
     )
