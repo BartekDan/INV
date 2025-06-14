@@ -173,17 +173,20 @@ SCHEMA: Dict[str, Any] = {
 def call_llm(epp_text: str) -> Dict[str, Any]:
     """Simple validation – no diff returned here."""
     client = OpenAI()
+    messages = [
+        {"role": "system", "content": "You are an EDI++ 1.11 validator; output JSON."},
+        {"role": "system", "content": json.dumps(SCHEMA)},
+        {"role": "system", "content": FULL_SPEC},
+        {"role": "user", "content": f"---BEGIN:EPP---\n{epp_text}\n---END:EPP---"},
+    ]
+    # Print the entire prompt for debugging purposes
+    print("call_llm messages:", json.dumps(messages, indent=2))
     rsp = client.chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
         temperature=1,
         reasoning_effort="high",
-        messages=[
-            {"role": "system", "content": "You are an EDI++ 1.11 validator; output JSON."},
-            {"role": "system", "content": json.dumps(SCHEMA)},
-            {"role": "system", "content": FULL_SPEC},
-            {"role": "user",   "content": f"---BEGIN:EPP---\n{epp_text}\n---END:EPP---"},
-        ],
+        messages=messages,
     )
     return json.loads(rsp.choices[0].message.content)
 
@@ -209,29 +212,32 @@ def analyze_epp(epp_text: str, script_code: str) -> Dict[str, Any]:
     """
     client = OpenAI()
     prompt = (
-            "Check this EPP if it meets schema defined in System#3; if invalid return JSON with keys 'report', 'reasoning', "
-            "'new_script'. List every invalid field in 'errors'. "
-            "**The returned 'new_script' must be a _complete_ Python module and** "
-            "**MUST define exactly** `def agent2_json_to_epp(json_path, output_path):` "
-            "**with the same signature and behavior as in the original converter**. "
-            "'new_script' should not include any other top-level functions. "
-            "It should import only standard libraries and OpenAI helpers.\n"
-              "List every invalid field in 'errors'. Do NOT just list general statistics. "
-+        "**You must never alter or invent any data from the input JSON** — invoice names, amounts, dates, everything must be preserved exactly. "
-+        "'new_script' must be a complete Python converter that, when used, fixes only formatting or structural bugs and reproduces the original data values unchanged.\n"
-            "---BEGIN:EPP---\n" + epp_text + "\n---END:EPP---\n"
-                                             "---BEGIN:SCRIPT---\n" + script_code + "\n---END:SCRIPT---"
+        "Check this EPP if it meets schema defined in System#3; if invalid return JSON with keys 'report', 'reasoning', "
+        "'new_script'. List every invalid field in 'errors'. "
+        "**The returned 'new_script' must be a _complete_ Python module and** "
+        "**MUST define exactly** `def agent2_json_to_epp(json_path, output_path):` "
+        "**with the same signature and behavior as in the original converter**. "
+        "'new_script' should not include any other top-level functions. "
+        "It should import only standard libraries and OpenAI helpers.\n"
+        "List every invalid field in 'errors'. Do NOT just list general statistics. "
+        "**You must never alter or invent any data from the input JSON** — invoice names, amounts, dates, everything must be preserved exactly. "
+        "'new_script' must be a complete Python converter that, when used, fixes only formatting or structural bugs and reproduces the original data values unchanged.\n"
+        "---BEGIN:EPP---\n" + epp_text + "\n---END:EPP---\n"
+        "---BEGIN:SCRIPT---\n" + script_code + "\n---END:SCRIPT---"
     )
+    messages = [
+        {"role": "system", "content": "You are an EDI++ expert; follow schema."},
+        {"role": "system", "content": json.dumps(SCHEMA)},
+        {"role": "system", "content": FULL_SPEC},
+        {"role": "user", "content": prompt},
+    ]
+    # Print the entire prompt for debugging purposes
+    print("analyze_epp messages:", json.dumps(messages, indent=2))
     rsp = client.chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
         temperature=1,
         reasoning_effort="high",
-        messages=[
-            {"role": "system", "content": "You are an EDI++ expert; follow schema."},
-            {"role": "system", "content": json.dumps(SCHEMA)},
-            {"role": "system", "content": FULL_SPEC},
-            {"role": "user",   "content": prompt},
-        ],
+        messages=messages,
     )
     return json.loads(rsp.choices[0].message.content)
