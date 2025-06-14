@@ -168,10 +168,10 @@ SCHEMA: Dict[str, Any] = {
 def analyze_epp(epp_text: str, json_text: str, script_code: str) -> Dict[str, Any]:
     client = OpenAI()
 
-    # STEP 1: Minimal unified-diff patch
+    # STEP 1: minimal diff request
     prompt_diff = (
         "You are a precision patch assistant.\n"
-        "Produce *only* a unified-diff (with ```diff fences```) that fixes exactly\n"
+        "Produce *only* a unified diff (wrapped in ```diff fences```) that fixes exactly\n"
         "the issues in the function `agent2_json_to_epp`—touch as few lines as possible.\n"
         "Do NOT include any prose outside the fences.\n\n"
         "---BEGIN:EPP---\n"    + epp_text   + "\n---END:EPP---\n"
@@ -182,25 +182,25 @@ def analyze_epp(epp_text: str, json_text: str, script_code: str) -> Dict[str, An
         temperature=1,
         response_format={"type": "json_object"},
         messages=[
-            {"role": "system", "content": "You are an expert at minimal code patching."},
-            {"role": "system", "content": json.dumps(SCHEMA)},
-            {"role": "system", "content": FULL_SPEC},
-            {"role": "user",   "content": prompt_diff},
+            {"role": "system",  "content": "You are an expert at minimal code patching."},
+            {"role": "system",  "content": json.dumps(SCHEMA)},
+            {"role": "system",  "content": FULL_SPEC},
+            {"role": "user",    "content": prompt_diff},
         ],
     )
-
     raw1 = rsp1.choices[0].message.content
-    # guard against None or bad JSON
+
+    # safely parse or default
     try:
         out1 = json.loads(raw1) if raw1 else {}
     except Exception:
         out1 = {}
 
-    diff = out1.get("diff", "").strip()
-    report = out1.get("report", {})
-    reasoning = out1.get("reasoning", "")
+    diff      = out1.get("diff",    "").strip()
+    report    = out1.get("report",  {})
+    reasoning = out1.get("reasoning","")
 
-    # Try applying the diff
+    # if we got a valid hunk, return it immediately
     if diff:
         try:
             patch = PatchSet(diff)
@@ -212,9 +212,9 @@ def analyze_epp(epp_text: str, json_text: str, script_code: str) -> Dict[str, An
                     "new_script": ""
                 }
         except Exception:
-            pass  # unparsable diff → fallback
+            pass
 
-    # STEP 2: Full-script fallback
+    # STEP 2: full-script fallback
     prompt_full = (
         "Minimal patch failed. Return JSON with 'report', 'reasoning', and 'new_script'.\n"
         "The 'new_script' must be a complete Python module defining exactly:\n"
@@ -235,7 +235,6 @@ def analyze_epp(epp_text: str, json_text: str, script_code: str) -> Dict[str, An
             {"role": "user",   "content": prompt_full},
         ],
     )
-
     raw2 = rsp2.choices[0].message.content or ""
     try:
         out2 = json.loads(raw2)
@@ -243,8 +242,8 @@ def analyze_epp(epp_text: str, json_text: str, script_code: str) -> Dict[str, An
         out2 = {}
 
     return {
-        "report":     out2.get("report", report),
+        "report":     out2.get("report",    report),
         "reasoning":  out2.get("reasoning", reasoning),
         "diff":       "",
-        "new_script": out2.get("new_script", "")
+        "new_script": out2.get("new_script","")
     }
