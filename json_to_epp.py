@@ -220,7 +220,7 @@ def agent2_json_to_epp(json_path: str, epp_path: str):
     hdr[33] = f"\"{s(meta.get('payment_method'))}\""
     hdr[34] = s(meta.get("date_of_payment"))
     hdr[35] = s(meta.get("amount_already_paid", "0"))
-    hdr[36] = s(meta.get("outstanding_amount", "0"))
+    hdr[36] = s(meta.get("gross_value_of_the_whole_invoice", "0"))
     hdr[37] = "0"
     hdr[38] = "0"
     hdr[39] = "1"
@@ -247,30 +247,25 @@ def agent2_json_to_epp(json_path: str, epp_path: str):
     hdr[60] = s(meta.get("suppliers_country_prefix", "0"))
     hdr[61] = "1"
 
-    vats_json = meta.get("vat_rows", [])
-    vats = []
-    for row in vats_json:
-        rate = s(row.get("rate", "0"))
-        vats.append([
-            rate,
-            rate,
-            s(row.get("net", "0")),
-            s(row.get("vat", "0")),
-            s(row.get("gross", "0")),
-        ])
+    r[0] = '"23"'
+    r[1] = s(meta.get("VAT/TVA_rate", "0"))
+    r[2] = s(meta.get("net_value_of_the_whole_invoice", "0"))
+    r[3] = s(meta.get("VAT/TVA_value_of_the_whole_invoice", "0"))
+    r[4] = s(meta.get("gross_value_of_the_whole_invoice", "0"))
+    r[5] = s(meta.get("net_value_of_the_whole_invoice", "0"))
+    r[6] = s(meta.get("VAT/TVA_value_of_the_whole_invoice", "0"))
+    r[7] = s(meta.get("gross_value_of_the_whole_invoice", "0"))
+    r[8] = '0.0000'
+    r[9] = '0.0000'
+    r[10] = '0.0000'
+    r[11] = '0.0000'
+    r[12] = '0.0000'
+    r[13] = '0.0000'
+    r[14] = '0.0000'
+    r[15] = '0.0000'
+    r[16] = '0.0000'
+    r[17] = '0.0000'
 
-    if not vats:
-        rate = s(meta.get("VAT_rate", "23.00"))
-        vats = [[rate, rate, hdr[27], hdr[28], hdr[29]]]
-
-    try:
-        net_f = float(hdr[27] or 0)
-        vat_f = float(hdr[28] or 0)
-    except ValueError:
-        net_f = vat_f = 0.0
-    hdr[29] = f"{net_f + vat_f:.2f}"
-    vats[0][2:] = [hdr[27], hdr[28], hdr[29]]
-    _normalise_numeric_and_dates(info, hdr, vats)
 
     join = lambda r: ",".join(map(str, r))
     lines = [
@@ -279,7 +274,7 @@ def agent2_json_to_epp(json_path: str, epp_path: str):
         "[NAGLOWEK]",
         join(hdr),
         "[ZAWARTOSC]",
-        *[join(r) for r in vats],
+        join(r),
         "",
     ]
     with open(epp_path, "wb") as f:

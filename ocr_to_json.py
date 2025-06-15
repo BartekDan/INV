@@ -38,6 +38,7 @@ FIELDS_TO_EXTRACT = [
     "date_of_receiving",
     "number_of_lines",
     "net_value_of_the_whole_invoice",
+    "VAT/TVA_rate",
     "VAT/TVA_value_of_the_whole_invoice",
     "gross_value_of_the_whole_invoice",
     "currency_of_the_invoice",
