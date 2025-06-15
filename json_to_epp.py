@@ -77,11 +77,20 @@ def _fmt_money(raw: str) -> str:
     )
     if raw == "":
         return ""
-    try:
-        return f"{Decimal(raw):.4f}"
-    except InvalidOperation:
+
+    # Extract leading numeric portion (e.g. "23%" → "23", "12.56PLN" → "12.56")
+    m = re.match(r"^([-+]?\d*\.?\d+)", raw)
+    if not m:
+        # if there's no numeric prefix, just return as-is
         return raw
 
+    num = m.group(1)
+    try:
+        # format to 4 decimal places
+        return f"{Decimal(num):.4f}"
+    except InvalidOperation:
+        # fallback to original raw if even the numeric prefix is invalid
+        return raw
 
 _date_only_re = re.compile(r"^(\d{4})[^\d]?(\d{2})[^\d]?(\d{2})$")
 _dt14_re = re.compile(r"^\d{14}$")
