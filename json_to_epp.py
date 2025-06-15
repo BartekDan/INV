@@ -141,7 +141,7 @@ def agent2_json_to_epp(json_path: str, epp_path: str):
 
     info = [""] * 24
     hdr: list[str] = [""] * 62
-    r = [""] * 14
+    r = [""] * 18
 
     info[0] = '"1.11"'
     info[1] = "0"
