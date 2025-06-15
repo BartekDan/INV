@@ -107,9 +107,10 @@ def _fmt_date(raw: str) -> str:
 _MONEY_IDX_HDR = {27, 28, 29, 30, 32, 35, 36, 56, 58}
 _DATE_IDX_HDR = {21, 22, 23, 34}
 _DATE_IDX_INFO = {16, 17}
+_MONEY_IDX_R = {1,2,3,4,5,6,7}
 
 
-def _normalise_numeric_and_dates(info: list[str], hdr: list[str], vats: list[list[str]]) -> None:
+def _normalise_numeric_and_dates(info: list[str], hdr: list[str], r: list[str]) -> None:
     """Normalise money and date fields in-place."""
     for i in _MONEY_IDX_HDR:
         hdr[i] = _fmt_money(hdr[i])
@@ -117,6 +118,8 @@ def _normalise_numeric_and_dates(info: list[str], hdr: list[str], vats: list[lis
         hdr[i] = _fmt_date(hdr[i])
     for i in _DATE_IDX_INFO:
         info[i] = _fmt_date(info[i])
+    for i in _MONEY_IDX_R:
+        r[i] = _fmt_money(r[i])
 
 
 
@@ -265,7 +268,7 @@ def agent2_json_to_epp(json_path: str, epp_path: str):
     r[16] = '0.0000'
     r[17] = '0.0000'
 
-    _normalise_numeric_and_dates(info, hdr)
+    _normalise_numeric_and_dates(info, hdr,r)
     join = lambda r: ",".join(map(str, r))
     lines = [
         "[INFO]",
