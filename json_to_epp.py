@@ -226,7 +226,7 @@ def agent2_json_to_epp(json_path: str, epp_path: str):
     hdr[39] = "1"
     hdr[40] = "0"
     hdr[41] = '"Osoba wystawiająca"'
-    hdr[42] = '"Osoba odbierająca'
+    hdr[42] = '"Osoba odbierająca"'
     hdr[43] = '""'
     hdr[44] = "0.0000"
     hdr[45] = "0.0000"
