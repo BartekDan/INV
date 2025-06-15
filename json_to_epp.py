@@ -217,7 +217,7 @@ def agent2_json_to_epp(json_path: str, epp_path: str):
     hdr[19] = ""
     hdr[20] = f"\"{s(meta.get('city_where_invoice_was_issued'))}\""
     hdr[21] = s(meta.get("invoice_date"))
-    hdr[22] = s(meta.get("sales_date"))
+    hdr[22] = s(meta.get("sales_date") or meta.get("invoice_date"))
     hdr[23] = s(meta.get("invoice_date"))
     hdr[24] = s(meta.get("number_of_lines"))
     hdr[25] = "1"
