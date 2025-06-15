@@ -225,7 +225,7 @@ def agent2_json_to_epp(json_path: str, epp_path: str):
     hdr[40] = "0"
     hdr[41] = s(meta.get("name_of_the_person_issuing_the_invoice", "0"))
     hdr[42] = s(meta.get("name_of_the_person_receiving_the_invoice", "0"))
-    hdr[43] = ""
+    hdr[43] = '""'
     hdr[44] = ""
     hdr[45] = ""
     hdr[46] = s(meta.get("currency_of_the_invoice", "0"))
