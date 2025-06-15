@@ -91,17 +91,17 @@ Idx | Name / Type                | Rule snapshot
 19 | subcat         T50          | always value if empty  → '""' 
 20 | place-issue    T30          | always value if empty  → '""' 
 21 | date-issue     Data         | always value 
-22 | date-sale      Data         | optional if empty leave blank
-23 | date-receive   Data         | optional if empty leave blank
+22 | date-sale      Data         | optional if empty → date of issue
+23 | date-receive   Data         | optional if empty → date of issue
 24 | positions      Long         | always value
 25 | net-price-flag L            | always value if empty put 1
-26 | active-price   T20          | always value  if empty  → '""' 
+26 | active-price   T20          | always value  if empty  → ""
 27 | net            Kwota        | always value
 28 | vat            Kwota        | always value
 29 | gross          Kwota        | always value
 30 | cost           Kwota        | always value  if empty put gross
-31 | disc-name      T30          | always value if empty  → '""' 
-32 | disc-%         Kwota        | always value  if empty put 0
+31 | rebate-name      T30          | always value if empty  → '""' 
+32 | rebate-%         Kwota        | always value  if empty put 0
 33 | pay-form       T30          | always value if empty  → '""' 
 34 | due            Data         | always value  
 35 | paid           Kwota        | always value  if empty put 0 

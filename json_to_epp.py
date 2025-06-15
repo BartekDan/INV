@@ -142,20 +142,20 @@ def agent2_json_to_epp(json_path: str, epp_path: str):
     info = [""] * 24
     hdr: list[str] = [""] * 62
 
-    info[0] = "1.11"
+    info[0] = '"1.11"'
     info[1] = "0"
     info[2] = "1250"
-    info[3] = "RETRAI-IMPORT"
-    info[4] = ""
+    info[3] = '"RETRAI-IMPORT"'
+    info[4] = '""'
     info[5] = f"\"{s(meta.get('buyer_short_name'))}\""
     info[6] = f"\"{s(meta.get('buyer_name'))}\""
     info[7] = f"\"{s(meta.get('buyer_city'))}\""
     info[8] = f"\"{s(meta.get('buyer_postal_zip_code'))}\""
     info[9] = f"\"{s(meta.get('byuer_address(street_and_number)'))}\""
     info[10] = f"\"{s(meta.get('byuer_nip'))}\""
-    info[11] = '""'
-    info[12] = '""'
-    info[13] = '""'
+    info[11] = '"1"'
+    info[12] = '"Magazyn"'
+    info[13] = '"Opis magazynu"'
     info[14] = '""'
 
     info[15] = "1"
@@ -177,18 +177,20 @@ def agent2_json_to_epp(json_path: str, epp_path: str):
             info[16] = info[17] = ""
     else:
         info[16] = info[17] = ""
-
+    info[18] = '"Nadawca"'
+    info[19] =  _dt.datetime.now().strftime("%Y%m%d%H%M%S")
     info[20] = f"\"{s(meta.get('buyer_country'))}\""
     info[21] = f"\"{s(meta.get('buyer_country_prefix'))}\""
-    info[22] = f"\"{s(meta.get('byuer_nip'))}\""
+    info[22] = ""
     info[23] = "1"
 
     hdr[0] = '"FZ"'
     hdr[1] = "1"
     hdr[2] = "0"
-    hdr[3] = hdr[4] = s(meta.get("invoice_number"))
+    hdr[3] = "0000000"
+    hdr[4] = s(meta.get("invoice_number"))
     hdr[5] = ""
-    hdr[6] = f"\"FZ {hdr[3]}\""
+    hdr[6] = f"\"FZ {hdr[4]}\""
     hdr[7] = s(meta.get("inoice_number_of_document_being_correcterd"))
     hdr[8] = s(meta.get("data_of_document_being_corretcted"))
     hdr[9] = s(meta.get("order_number"))
@@ -215,7 +217,7 @@ def agent2_json_to_epp(json_path: str, epp_path: str):
     hdr[30] = s(meta.get("gross_value_of_the_whole_invoice", "0"))
     hdr[31] = s(meta.get("rebate_name(if_granted)", "0"))
     hdr[32] = s(meta.get("rebate_value(if_granted)", "0"))
-    hdr[33] = s(meta.get("payment_method"))
+    hdr[33] = f"\"{s(meta.get('payment_method'))}\""
     hdr[34] = s(meta.get("date_of_payment"))
     hdr[35] = s(meta.get("amount_already_paid", "0"))
     hdr[36] = s(meta.get("outstanding_amount", "0"))
@@ -223,12 +225,12 @@ def agent2_json_to_epp(json_path: str, epp_path: str):
     hdr[38] = "0"
     hdr[39] = "1"
     hdr[40] = "0"
-    hdr[41] = s(meta.get("name_of_the_person_issuing_the_invoice", "0"))
-    hdr[42] = s(meta.get("name_of_the_person_receiving_the_invoice", "0"))
+    hdr[41] = '"Osoba wystawiająca"'
+    hdr[42] = '"Osoba odbierająca'
     hdr[43] = '""'
-    hdr[44] = ""
-    hdr[45] = ""
-    hdr[46] = s(meta.get("currency_of_the_invoice", "0"))
+    hdr[44] = "0.0000"
+    hdr[45] = "0.0000"
+    hdr[46] = f"\"{s(meta.get('currency_of_the_invoice'))}\""
     hdr[47] = "1.0000"
     hdr[48] = '""'
     hdr[49] = '""'
